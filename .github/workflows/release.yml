@@ -1,7 +1,7 @@
 name: Release
 
-# Stable releases: tag vX.Y.Z on a commit that is on main.
-# Pre-releases:    tag vX.Y.Z-rc.N (any branch) -> npm dist-tag "rc", GitHub pre-release.
+# Stable releases: tag vX.Y.Z on a commit that is on main -> GitHub Release + Homebrew formula bump.
+# Pre-releases:    tag vX.Y.Z-rc.N (any branch) -> GitHub pre-release only.
 on:
   push:
     tags:
@@ -10,7 +10,6 @@ on:
 
 permissions:
   contents: write
-  id-token: write
 
 jobs:
   release:
@@ -47,7 +46,6 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          registry-url: https://registry.npmjs.org
 
       - run: npm ci
       - run: npm run typecheck
@@ -59,8 +57,7 @@ jobs:
       - name: Pack tarball
         run: npm pack
 
-      # Release before npm publish, and idempotently: a rerun after a failed
-      # publish (e.g. bad NPM_TOKEN) must not die on an existing release.
+      # Idempotent: a rerun must not die on an existing release.
       - name: Create GitHub release
         run: |
           if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
@@ -74,14 +71,25 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
-      - name: Publish to npm
-        if: env.NODE_AUTH_TOKEN != ''
-        run: npm publish --access public --provenance --tag "${{ steps.meta.outputs.channel }}"
+      - name: Bump Homebrew formula
+        if: steps.meta.outputs.channel == 'latest' && env.TAP_PUSH_TOKEN != ''
+        run: |
+          VERSION="${{ steps.meta.outputs.version }}"
+          SHA=$(shasum -a 256 "nightswatch-$VERSION.tgz" | awk '{print $1}')
+          git clone "https://x-access-token:${TAP_PUSH_TOKEN}@github.com/razvanmacovei/homebrew-tap.git" tap
+          cd tap
+          sed -i.bak -E "s|releases/download/v[0-9.]+/nightswatch-[0-9.]+\.tgz|releases/download/v$VERSION/nightswatch-$VERSION.tgz|" Formula/nightswatch.rb
+          sed -i.bak -E "s|sha256 \"[a-f0-9]{64}\"|sha256 \"$SHA\"|" Formula/nightswatch.rb
+          rm -f Formula/nightswatch.rb.bak
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "Bump nightswatch to $VERSION"
+          git push
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          TAP_PUSH_TOKEN: ${{ secrets.TAP_PUSH_TOKEN }}
 
-      - name: Warn when NPM_TOKEN is missing
-        if: env.NODE_AUTH_TOKEN == ''
-        run: echo "::warning::NPM_TOKEN secret not set — skipped npm publish. Add it in repo settings to publish releases."
+      - name: Warn when TAP_PUSH_TOKEN is missing
+        if: steps.meta.outputs.channel == 'latest' && env.TAP_PUSH_TOKEN == ''
+        run: echo "::warning::TAP_PUSH_TOKEN secret not set — Homebrew formula not bumped. Update razvanmacovei/homebrew-tap manually or add a PAT with push access as TAP_PUSH_TOKEN."
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          TAP_PUSH_TOKEN: ${{ secrets.TAP_PUSH_TOKEN }}
