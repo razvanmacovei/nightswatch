@@ -72,11 +72,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
 
       - name: Bump Homebrew formula
-        if: steps.meta.outputs.channel == 'latest' && env.TAP_PUSH_TOKEN != ''
+        if: steps.meta.outputs.channel == 'latest' && env.HOMEBREW_TAP_TOKEN != ''
         run: |
           VERSION="${{ steps.meta.outputs.version }}"
           SHA=$(shasum -a 256 "nightswatch-$VERSION.tgz" | awk '{print $1}')
-          git clone "https://x-access-token:${TAP_PUSH_TOKEN}@github.com/razvanmacovei/homebrew-tap.git" tap
+          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/razvanmacovei/homebrew-tap.git" tap
           cd tap
           sed -i.bak -E "s|releases/download/v[0-9.]+/nightswatch-[0-9.]+\.tgz|releases/download/v$VERSION/nightswatch-$VERSION.tgz|" Formula/nightswatch.rb
           sed -i.bak -E "s|sha256 \"[a-f0-9]{64}\"|sha256 \"$SHA\"|" Formula/nightswatch.rb
@@ -86,10 +86,10 @@ jobs:
           git commit -am "Bump nightswatch to $VERSION"
           git push
         env:
-          TAP_PUSH_TOKEN: ${{ secrets.TAP_PUSH_TOKEN }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 
-      - name: Warn when TAP_PUSH_TOKEN is missing
-        if: steps.meta.outputs.channel == 'latest' && env.TAP_PUSH_TOKEN == ''
-        run: echo "::warning::TAP_PUSH_TOKEN secret not set — Homebrew formula not bumped. Update razvanmacovei/homebrew-tap manually or add a PAT with push access as TAP_PUSH_TOKEN."
+      - name: Warn when HOMEBREW_TAP_TOKEN is missing
+        if: steps.meta.outputs.channel == 'latest' && env.HOMEBREW_TAP_TOKEN == ''
+        run: echo "::warning::HOMEBREW_TAP_TOKEN secret not set — Homebrew formula not bumped. Update razvanmacovei/homebrew-tap manually or add a PAT with push access as HOMEBREW_TAP_TOKEN."
         env:
-          TAP_PUSH_TOKEN: ${{ secrets.TAP_PUSH_TOKEN }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
