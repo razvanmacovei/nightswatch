@@ -1,0 +1,81 @@
+name: Release
+
+# Stable releases: tag vX.Y.Z on a commit that is on main.
+# Pre-releases:    tag vX.Y.Z-rc.N (any branch) -> npm dist-tag "rc", GitHub pre-release.
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+'
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  release:
+    # macOS runner: the package declares "os": ["darwin"] (see ci.yml).
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine version and channel
+        id: meta
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [[ "$VERSION" == *-* ]]; then
+            echo "channel=rc" >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "channel=latest" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Enforce stable releases from main
+        if: steps.meta.outputs.channel == 'latest'
+        run: |
+          git fetch origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::Stable tags must point to a commit on main. Use a -rc.N tag for testing branches."
+            exit 1
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - name: Set package version from tag
+        run: npm version "${{ steps.meta.outputs.version }}" --no-git-tag-version
+      - run: npm run build
+
+      - name: Pack tarball
+        run: npm pack
+
+      - name: Publish to npm
+        if: env.NODE_AUTH_TOKEN != ''
+        run: npm publish --access public --provenance --tag "${{ steps.meta.outputs.channel }}"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Warn when NPM_TOKEN is missing
+        if: env.NODE_AUTH_TOKEN == ''
+        run: echo "::warning::NPM_TOKEN secret not set — skipped npm publish. Add it in repo settings to publish releases."
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create GitHub release
+        run: |
+          gh release create "$GITHUB_REF_NAME" nightswatch-*.tgz \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            ${{ steps.meta.outputs.prerelease == 'true' && '--prerelease' || '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
