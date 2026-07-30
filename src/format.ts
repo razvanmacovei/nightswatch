@@ -15,6 +15,8 @@ export function describeDetection(detection: Detection): string {
       return 'working / idle';
     case 'permission-prompt':
       return 'waiting on permission prompt';
+    case 'question-menu':
+      return 'waiting on a question';
     case 'limit-menu':
     case 'limit-idle': {
       const { resetAt } = detection;

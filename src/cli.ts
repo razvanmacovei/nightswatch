@@ -32,6 +32,7 @@ Usage:
   nightswatch ls                 List Claude Code sessions running in iTerm2
   nightswatch watch <n>          Watch session <n> from \`nightswatch ls\`
   nightswatch watch --all        Watch every discovered session
+  nightswatch watch <n> --yolo   Also answer questions Claude asks (see below)
   nightswatch log [YYYY-MM-DD]   Show the journal for a day (default: today)
   nightswatch --version          Print the version
   nightswatch --help             Show this help
@@ -39,6 +40,11 @@ Usage:
 While watching, nightswatch auto-approves permission prompts (the plain "Yes"
 option) and, when a usage limit is hit, selects "Stop and wait for limit to
 reset", parses the reset time and sends "continue" once the window reopens.
+
+With --yolo, question menus (AskUserQuestion) are answered too: the
+"(Recommended)" option when one exists, otherwise the highlighted default;
+multi-select questions get "select all" then confirm. Without --yolo,
+questions are journaled but left for you to answer.
 
 Safety: watching a session approves EVERY prompt it raises — functionally the
 same as --dangerously-skip-permissions. Configure deny rules in Claude Code's
@@ -80,7 +86,7 @@ async function cmdLs(iterm: ItermAdapter): Promise<void> {
   for (const line of formatTable(['WIN/TAB', 'DIRECTORY', 'STATE'], rows)) console.log(line);
 }
 
-async function cmdWatch(iterm: ItermAdapter, selector: string): Promise<void> {
+async function cmdWatch(iterm: ItermAdapter, selector: string, yolo: boolean): Promise<void> {
   const discovered = await discover(iterm);
   if (discovered.length === 0) {
     console.error('No Claude Code sessions found in iTerm2. Nothing to watch.');
@@ -114,7 +120,9 @@ async function cmdWatch(iterm: ItermAdapter, selector: string): Promise<void> {
       sessionName: name,
       detail: `pid ${d.process.pid}, tty ${d.session.tty}`,
     });
-    log(`watching ${name} (window ${d.session.windowIndex}, tab ${d.session.tabIndex}) — auto-yes ON`);
+    log(
+      `watching ${name} (window ${d.session.windowIndex}, tab ${d.session.tabIndex}) — auto-yes ON${yolo ? ', yolo ON' : ''}`,
+    );
     return {
       name,
       watcher: createWatcher({
@@ -137,6 +145,7 @@ async function cmdWatch(iterm: ItermAdapter, selector: string): Promise<void> {
         cooldownMs: COOLDOWN_MS,
         resumeMarginMs: RESUME_MARGIN_MS,
         fallbackWaitMs: FALLBACK_WAIT_MS,
+        yolo,
       }),
     };
   });
@@ -215,13 +224,14 @@ async function main(): Promise<void> {
       await cmdLs(iterm);
       return;
     case 'watch': {
-      const selector = rest[0];
+      const yolo = rest.includes('--yolo');
+      const selector = rest.filter((a) => a !== '--yolo')[0];
       if (!selector) {
-        console.error('Usage: nightswatch watch <n> | --all');
+        console.error('Usage: nightswatch watch <n> | --all [--yolo]');
         process.exitCode = 1;
         return;
       }
-      await cmdWatch(iterm, selector);
+      await cmdWatch(iterm, selector, yolo);
       return;
     }
     case 'log':

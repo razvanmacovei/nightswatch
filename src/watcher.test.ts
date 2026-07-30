@@ -18,7 +18,30 @@ You've reached your usage limit · resets 3am
 
 const WORKING = `● Thinking… (5s)`;
 
-function harness(initialScreen: string) {
+const QUESTION_RECOMMENDED = `
+● Which language should the landing page use?
+
+❯ 1. Romanian
+  2. English (Recommended)
+`;
+
+const QUESTION_PLAIN = `
+● Which database do you prefer?
+
+❯ 1. Postgres
+  2. SQLite
+`;
+
+const QUESTION_MULTISELECT = `
+● Which features do you want to enable?
+
+❯ ◻ 1. Newsletter
+  ◻ 2. Contact form
+
+Space to toggle, Enter to confirm, a to select all, n to select none
+`;
+
+function harness(initialScreen: string, opts: { yolo?: boolean } = {}) {
   const sent: Array<{ text: string; newline: boolean }> = [];
   const events: JournalEvent[] = [];
   let screen: string | null = initialScreen;
@@ -34,6 +57,7 @@ function harness(initialScreen: string) {
     cooldownMs: 5_000,
     resumeMarginMs: 60_000,
     fallbackWaitMs: 30 * 60_000,
+    yolo: opts.yolo ?? false,
   });
   return {
     watcher,
@@ -140,6 +164,56 @@ Usage limit reached.
     await h.watcher.tick();
     expect(h.sent).toHaveLength(2);
     expect(h.events.filter((e) => e.event === 'resume-scheduled').length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('question menus and yolo mode', () => {
+  test('without yolo, a question is journaled once but never answered', async () => {
+    const h = harness(QUESTION_RECOMMENDED);
+    await h.watcher.tick();
+    h.advance(6_000);
+    await h.watcher.tick();
+    expect(h.sent).toHaveLength(0);
+    expect(h.events.filter((e) => e.event === 'question-detected')).toHaveLength(1);
+  });
+
+  test('yolo answers with the recommended option digit', async () => {
+    const h = harness(QUESTION_RECOMMENDED, { yolo: true });
+    await h.watcher.tick();
+    expect(h.sent).toEqual([{ text: '2', newline: false }]);
+    expect(h.events.map((e) => e.event)).toContain('question-answered');
+  });
+
+  test('yolo confirms the highlighted default when nothing is recommended', async () => {
+    const h = harness(QUESTION_PLAIN, { yolo: true });
+    await h.watcher.tick();
+    expect(h.sent).toEqual([{ text: '', newline: true }]);
+  });
+
+  test('yolo selects all then confirms on multi-select questions', async () => {
+    const h = harness(QUESTION_MULTISELECT, { yolo: true });
+    await h.watcher.tick();
+    expect(h.sent).toEqual([
+      { text: 'a', newline: false },
+      { text: '', newline: true },
+    ]);
+  });
+
+  test('yolo does not double-answer within the cooldown', async () => {
+    const h = harness(QUESTION_PLAIN, { yolo: true });
+    await h.watcher.tick();
+    await h.watcher.tick();
+    expect(h.sent).toHaveLength(1);
+  });
+
+  test('sequential questions are answered one per cooldown window', async () => {
+    const h = harness(QUESTION_RECOMMENDED, { yolo: true });
+    await h.watcher.tick();
+    h.setScreen(QUESTION_PLAIN);
+    h.advance(6_000);
+    await h.watcher.tick();
+    expect(h.sent).toHaveLength(2);
+    expect(h.sent[1]).toEqual({ text: '', newline: true });
   });
 });
 

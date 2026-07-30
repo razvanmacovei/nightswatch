@@ -2,6 +2,12 @@ export type Detection =
   | { kind: 'permission-prompt'; yesOption: number; question: string }
   | { kind: 'limit-menu'; waitOption: number; resetAt: Date | null }
   | { kind: 'limit-idle'; resetAt: Date | null }
+  | {
+      kind: 'question-menu';
+      multiSelect: boolean;
+      recommendedOption: number | null;
+      question: string;
+    }
   | { kind: 'none' };
 
 interface MenuOption {
@@ -19,8 +25,11 @@ const LIMIT_TEXT =
   /(limit reached|(reached|hit) your\b.{0,40}\blimit|out of usage credits|usage limit\b)/i;
 
 // Single digit only: real Claude Code menus have at most a handful of options,
-// and a tighter match shrinks the spoofable surface.
-const OPTION_LINE = /^\s*(❯\s*)?([1-9])\.\s+(.+?)\s*$/;
+// and a tighter match shrinks the spoofable surface. Multi-select questions
+// prefix options with a checkbox glyph.
+const OPTION_LINE = /^\s*(❯\s*)?(?:[◻◼☐☑▢■]\s*)?([1-9])\.\s+(.+?)\s*$/;
+const MULTISELECT_HINT = /space to toggle/i;
+const RECOMMENDED = /\(recommended\)/i;
 
 /**
  * Extract a select-menu from the screen: two or more numbered options on
@@ -66,7 +75,20 @@ export function detect(screen: string, now: Date): Detection {
         return { kind: 'permission-prompt', yesOption: yes.number, question };
       }
     }
-    return { kind: 'none' };
+    // Any other caret menu is a question (AskUserQuestion or similar picker).
+    const recommended = menu.find((o) => RECOMMENDED.test(o.label));
+    const question =
+      screen
+        .split('\n')
+        .map((l) => l.trim())
+        .filter((l) => l.length > 0 && !OPTION_LINE.test(l) && !MULTISELECT_HINT.test(l))
+        .pop() ?? '';
+    return {
+      kind: 'question-menu',
+      multiSelect: MULTISELECT_HINT.test(screen),
+      recommendedOption: recommended ? recommended.number : null,
+      question,
+    };
   }
   if (LIMIT_TEXT.test(screen)) {
     return { kind: 'limit-idle', resetAt: parseResetTime(screen, now) };

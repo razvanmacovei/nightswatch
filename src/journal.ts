@@ -6,6 +6,8 @@ export interface JournalEvent {
     | 'watch-start'
     | 'watch-stop'
     | 'auto-approve'
+    | 'question-detected'
+    | 'question-answered'
     | 'limit-detected'
     | 'stop-and-wait-selected'
     | 'resume-scheduled'

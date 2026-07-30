@@ -54,8 +54,24 @@ Automation permission to control iTerm2 — allow it.
 nightswatch ls                 List Claude Code sessions running in iTerm2
 nightswatch watch <n>          Watch session <n> from `nightswatch ls`
 nightswatch watch --all        Watch every discovered session
+nightswatch watch <n> --yolo   Also answer questions Claude asks
 nightswatch log [YYYY-MM-DD]   Show the journal for a day (default: today)
 ```
+
+### YOLO mode
+
+Claude Code sometimes stops to ask a multiple-choice question (which approach,
+which library, which options to enable). By default nightswatch leaves those
+for you — the journal records `question-detected` so you know why a session
+stalled. With `--yolo` it answers them too:
+
+- single-choice: picks the **(Recommended)** option when there is one,
+  otherwise confirms the highlighted default
+- multi-select: selects **all** options, then confirms
+- consecutive questions are answered one by one
+
+YOLO means what it says: Claude's own judgment drives every fork in the road
+overnight. Use it on sessions where any reasonable answer beats a stalled one.
 
 Leave `nightswatch watch` running in its own terminal tab overnight. Stop it
 any time with `Ctrl+C` — the watched sessions themselves are untouched; they

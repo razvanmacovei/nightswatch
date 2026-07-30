@@ -14,6 +14,8 @@ export interface WatcherDeps {
   resumeMarginMs: number;
   /** Wait applied when a limit is detected but no reset time is parseable. */
   fallbackWaitMs: number;
+  /** YOLO mode: also answer question menus (recommended option / select all). */
+  yolo?: boolean;
 }
 
 export interface Watcher {
@@ -26,6 +28,7 @@ export function createWatcher(deps: WatcherDeps): Watcher {
   let stopped = false;
   let lastSendAt = 0;
   let resumeAt: number | null = null;
+  let questionOnScreen = false;
 
   const record = (event: Parameters<Journal['record']>[0]['event'], detail: string) => {
     journal.record({ event, sessionId: session.id, sessionName: session.name, detail });
@@ -72,6 +75,7 @@ export function createWatcher(deps: WatcherDeps): Watcher {
       }
 
       const detection = detect(screen, deps.now());
+      if (detection.kind !== 'question-menu') questionOnScreen = false;
 
       switch (detection.kind) {
         case 'limit-menu': {
@@ -100,6 +104,30 @@ export function createWatcher(deps: WatcherDeps): Watcher {
           if (canSend(nowMs)) {
             await sendKey(String(detection.yesOption), nowMs);
             record('auto-approve', detection.question || 'permission prompt approved');
+          }
+          return;
+        }
+        case 'question-menu': {
+          if (!deps.yolo) {
+            if (!questionOnScreen) {
+              questionOnScreen = true;
+              record('question-detected', detection.question || 'question menu on screen');
+            }
+            return;
+          }
+          if (canSend(nowMs)) {
+            if (detection.multiSelect) {
+              // The user's call: select everything, then confirm.
+              await deps.send('a', { newline: false });
+              await deps.send('', { newline: true });
+            } else if (detection.recommendedOption !== null) {
+              await deps.send(String(detection.recommendedOption), { newline: false });
+            } else {
+              // Enter confirms the highlighted default option.
+              await deps.send('', { newline: true });
+            }
+            lastSendAt = nowMs;
+            record('question-answered', detection.question || 'question menu answered');
           }
           return;
         }

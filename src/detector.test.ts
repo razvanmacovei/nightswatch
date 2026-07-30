@@ -120,6 +120,68 @@ describe('detect', () => {
   });
 });
 
+describe('question menus (AskUserQuestion)', () => {
+  const QUESTION_SINGLE = `
+● Which language should the landing page use?
+
+❯ 1. Romanian (Recommended)
+  2. English
+  3. Both languages
+`;
+
+  const QUESTION_SINGLE_NO_RECOMMENDED = `
+● Which database do you prefer?
+
+❯ 1. Postgres
+  2. SQLite
+`;
+
+  const QUESTION_MULTISELECT = `
+● Which features do you want to enable?
+
+❯ ◻ 1. Newsletter
+  ◻ 2. Contact form
+  ◻ 3. Blog
+
+Space to toggle, Enter to confirm, a to select all, n to select none
+`;
+
+  test('recognizes a single-select question and finds the recommended option', () => {
+    const d = detect(QUESTION_SINGLE, NOW);
+    expect(d).toMatchObject({ kind: 'question-menu', multiSelect: false, recommendedOption: 1 });
+  });
+
+  test('recommended option is found even when not first', () => {
+    const screen = `
+● Pick a plan:
+
+❯ 1. Free
+  2. Pro (Recommended)
+  3. Enterprise
+`;
+    const d = detect(screen, NOW);
+    expect(d).toMatchObject({ kind: 'question-menu', recommendedOption: 2 });
+  });
+
+  test('single-select without a recommendation has no recommendedOption', () => {
+    const d = detect(QUESTION_SINGLE_NO_RECOMMENDED, NOW);
+    expect(d).toMatchObject({ kind: 'question-menu', multiSelect: false, recommendedOption: null });
+  });
+
+  test('recognizes a multi-select question via the space-to-toggle hint', () => {
+    const d = detect(QUESTION_MULTISELECT, NOW);
+    expect(d).toMatchObject({ kind: 'question-menu', multiSelect: true });
+  });
+
+  test('permission prompts still win over question classification', () => {
+    expect(detect(PERMISSION_PROMPT, NOW).kind).toBe('permission-prompt');
+  });
+
+  test('limit menus still win over question classification', () => {
+    expect(detect(LIMIT_MENU, NOW).kind).toBe('limit-menu');
+  });
+});
+
 describe('parseResetTime', () => {
   test('parses bare am/pm times as the next occurrence', () => {
     expect(parseResetTime('resets 3am', NOW)).toEqual(new Date(2026, 6, 30, 3, 0, 0));
