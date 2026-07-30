@@ -17,17 +17,20 @@ function assertSessionId(id: string): void {
   }
 }
 
+// Closing/zombie windows can return null for tabs()/sessions(); skip them.
 const LIST_SESSIONS_SCRIPT = `
 function run() {
   const iterm = Application('iTerm2');
   if (!iterm.running()) return JSON.stringify([]);
   const out = [];
   iterm.windows().forEach((w, wi) => {
-    w.tabs().forEach((t, ti) => {
-      t.sessions().forEach((s) => {
-        out.push({ id: s.id(), tty: s.tty(), name: s.name(), windowIndex: wi, tabIndex: ti });
+    try {
+      (w.tabs() || []).forEach((t, ti) => {
+        (t.sessions() || []).forEach((s) => {
+          out.push({ id: s.id(), tty: s.tty(), name: s.name(), windowIndex: wi, tabIndex: ti });
+        });
       });
-    });
+    } catch (e) {}
   });
   return JSON.stringify(out);
 }`;
@@ -37,11 +40,13 @@ function findSessionSnippet(id: string): string {
   const iterm = Application('iTerm2');
   let found = null;
   iterm.windows().forEach((w) => {
-    w.tabs().forEach((t) => {
-      t.sessions().forEach((s) => {
-        if (!found && s.id() === ${JSON.stringify(id)}) found = s;
+    try {
+      (w.tabs() || []).forEach((t) => {
+        (t.sessions() || []).forEach((s) => {
+          if (!found && s.id() === ${JSON.stringify(id)}) found = s;
+        });
       });
-    });
+    } catch (e) {}
   });
   if (!found) throw new Error('session not found: ' + ${JSON.stringify(id)});`;
 }
