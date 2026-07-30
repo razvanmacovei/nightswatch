@@ -1,5 +1,7 @@
 # nightswatch
 
+[![CI](https://github.com/razvanmacovei/nightswatch/actions/workflows/ci.yml/badge.svg)](https://github.com/razvanmacovei/nightswatch/actions/workflows/ci.yml)
+
 **Keep your Claude Code sessions moving overnight.**
 
 You leave Claude Code working on a long task, go to bed, and at 2 AM it hits
