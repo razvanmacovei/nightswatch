@@ -18,7 +18,9 @@ const REJECT_OPTION = /\b(no|deny), and tell claude what to do (differently|next
 const LIMIT_TEXT =
   /(limit reached|(reached|hit) your\b.{0,40}\blimit|out of usage credits|usage limit\b)/i;
 
-const OPTION_LINE = /^\s*(❯\s*)?(\d{1,2})\.\s+(.+?)\s*$/;
+// Single digit only: real Claude Code menus have at most a handful of options,
+// and a tighter match shrinks the spoofable surface.
+const OPTION_LINE = /^\s*(❯\s*)?([1-9])\.\s+(.+?)\s*$/;
 
 /**
  * Extract a select-menu from the screen: two or more numbered options on

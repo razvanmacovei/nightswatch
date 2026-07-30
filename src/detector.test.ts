@@ -102,6 +102,14 @@ describe('detect', () => {
     expect(detect(PLAIN_SHELL, NOW).kind).toBe('none');
   });
 
+  test('rejects multi-digit option numbers (real menus are single-digit)', () => {
+    const screen = `
+❯ 10. Yes
+  11. No, and tell Claude what to do differently (esc)
+`;
+    expect(detect(screen, NOW).kind).toBe('none');
+  });
+
   test('does not treat a numbered list in chat output as a menu', () => {
     const screen = `
 ● Here is my plan:
