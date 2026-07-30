@@ -41,14 +41,22 @@ $ nightswatch log
 
 ## Install
 
+Via Homebrew (recommended):
+
+```
+brew install razvanmacovei/tap/nightswatch
+```
+
+Or via npm (requires Node.js ≥ 20):
+
 ```
 npm install -g nightswatch
 ```
 
-Requirements: **macOS**, **iTerm2**, Node.js ≥ 20. The first run will ask for
-macOS Automation permission to control iTerm2 — allow it.
+Requirements: **macOS**, **iTerm2**. The first run will ask for macOS
+Automation permission to control iTerm2 — allow it.
 
-Release candidates are published on the `rc` dist-tag:
+Release candidates are published on the npm `rc` dist-tag:
 
 ```
 npm install -g nightswatch@rc
