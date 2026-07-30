@@ -57,9 +57,12 @@ export function createItermAdapter(run: JxaRunner): ItermAdapter {
       assertSessionId(sessionId);
       const script = `
 function run() {${findSessionSnippet(sessionId)}
-  return JSON.stringify(found.contents());
+  return JSON.stringify({ rows: found.rows(), text: found.contents() });
 }`;
-      return JSON.parse(await run(script)) as string;
+      const { rows, text } = JSON.parse(await run(script)) as { rows: number; text: string };
+      // `contents` includes the whole scrollback; only the visible viewport
+      // (the last `rows` lines) reflects the session's current state.
+      return text.split('\n').slice(-rows).join('\n');
     },
 
     async sendText(sessionId, text, opts) {

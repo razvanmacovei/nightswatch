@@ -14,7 +14,8 @@ permissions:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    # macOS runner: the package declares "os": ["darwin"] (see ci.yml).
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
         with:

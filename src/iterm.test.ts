@@ -27,11 +27,21 @@ describe('listSessions', () => {
 
 describe('readScreen', () => {
   test('embeds the session id and returns screen text', async () => {
-    const { calls, run } = fakeRunner(JSON.stringify('screen text here'));
+    const { calls, run } = fakeRunner(JSON.stringify({ rows: 24, text: 'screen text here' }));
     const iterm = createItermAdapter(run);
     const text = await iterm.readScreen('574E3F72-5E19-4282-9E89-F7AEB7B8F021');
     expect(text).toBe('screen text here');
     expect(calls[0]).toContain('574E3F72-5E19-4282-9E89-F7AEB7B8F021');
+  });
+
+  test('returns only the visible viewport, not the scrollback history', async () => {
+    // iTerm2's `contents` includes the whole session history; stale menus in
+    // the scrollback must never reach the detector.
+    const history = ['old menu line 1', '❯ 1. Yes', 'newer output', 'current line', '❯'].join('\n');
+    const { run } = fakeRunner(JSON.stringify({ rows: 2, text: history }));
+    const iterm = createItermAdapter(run);
+    const text = await iterm.readScreen('ABC-123');
+    expect(text).toBe('current line\n❯');
   });
 
   test('rejects session ids that could break out of the script', async () => {

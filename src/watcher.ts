@@ -75,7 +75,9 @@ export function createWatcher(deps: WatcherDeps): Watcher {
 
       switch (detection.kind) {
         case 'limit-menu': {
-          if (canSend(nowMs)) {
+          // A scheduled resume means we already chose stop-and-wait; a stale
+          // menu on screen must not trigger a second selection.
+          if (resumeAt === null && canSend(nowMs)) {
             record('limit-detected', 'limit menu on screen');
             await sendKey(String(detection.waitOption), nowMs);
             record('stop-and-wait-selected', `chose option ${detection.waitOption}`);

@@ -109,6 +109,14 @@ Usage limit reached.
     expect(h.sent).toHaveLength(2); // fallback 30m + margin elapsed
   });
 
+  test('does not reselect stop-and-wait while a resume is already scheduled', async () => {
+    const h = harness(LIMIT_MENU);
+    await h.watcher.tick(); // selects wait, schedules resume
+    h.advance(10_000); // well past the cooldown, menu still on screen
+    await h.watcher.tick();
+    expect(h.sent).toHaveLength(1);
+  });
+
   test('sends continue even when the limit banner is still on screen at reset time', async () => {
     const h = harness(LIMIT_MENU);
     await h.watcher.tick(); // selects wait, schedules resume at 3am + margin
