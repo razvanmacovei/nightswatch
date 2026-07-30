@@ -44,6 +44,16 @@ describe('readScreen', () => {
     expect(text).toBe('current line\n❯');
   });
 
+  test('a trailing newline in contents does not shift the viewport window', async () => {
+    // contents() ends with "\n"; the phantom empty element after split must
+    // not push the first real screen line out of the slice.
+    const history = ['scrollback', 'banner · resets in 1m', '❯'].join('\n') + '\n';
+    const { run } = fakeRunner(JSON.stringify({ rows: 2, text: history }));
+    const iterm = createItermAdapter(run);
+    const text = await iterm.readScreen('ABC-123');
+    expect(text).toBe('banner · resets in 1m\n❯');
+  });
+
   test('rejects session ids that could break out of the script', async () => {
     const { run } = fakeRunner('""');
     const iterm = createItermAdapter(run);

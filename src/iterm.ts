@@ -61,8 +61,9 @@ function run() {${findSessionSnippet(sessionId)}
 }`;
       const { rows, text } = JSON.parse(await run(script)) as { rows: number; text: string };
       // `contents` includes the whole scrollback; only the visible viewport
-      // (the last `rows` lines) reflects the session's current state.
-      return text.split('\n').slice(-rows).join('\n');
+      // (the last `rows` lines) reflects the session's current state. Strip
+      // the final newline first or its phantom empty element shifts the slice.
+      return text.replace(/\n$/, '').split('\n').slice(-rows).join('\n');
     },
 
     async sendText(sessionId, text, opts) {
