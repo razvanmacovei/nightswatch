@@ -59,6 +59,21 @@ jobs:
       - name: Pack tarball
         run: npm pack
 
+      # Release before npm publish, and idempotently: a rerun after a failed
+      # publish (e.g. bad NPM_TOKEN) must not die on an existing release.
+      - name: Create GitHub release
+        run: |
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists, skipping."
+          else
+            gh release create "$GITHUB_REF_NAME" nightswatch-*.tgz \
+              --title "$GITHUB_REF_NAME" \
+              --generate-notes \
+              ${{ steps.meta.outputs.prerelease == 'true' && '--prerelease' || '' }}
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
       - name: Publish to npm
         if: env.NODE_AUTH_TOKEN != ''
         run: npm publish --access public --provenance --tag "${{ steps.meta.outputs.channel }}"
@@ -70,12 +85,3 @@ jobs:
         run: echo "::warning::NPM_TOKEN secret not set — skipped npm publish. Add it in repo settings to publish releases."
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Create GitHub release
-        run: |
-          gh release create "$GITHUB_REF_NAME" nightswatch-*.tgz \
-            --title "$GITHUB_REF_NAME" \
-            --generate-notes \
-            ${{ steps.meta.outputs.prerelease == 'true' && '--prerelease' || '' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
