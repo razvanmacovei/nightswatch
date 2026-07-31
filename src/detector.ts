@@ -1,6 +1,6 @@
 export type Detection =
   | { kind: 'permission-prompt'; yesOption: number; question: string }
-  | { kind: 'limit-menu'; waitOption: number; resetAt: Date | null }
+  | { kind: 'limit-menu'; waitOption: number | null; resetAt: Date | null }
   | { kind: 'limit-idle'; resetAt: Date | null }
   | {
       kind: 'question-menu';
@@ -29,6 +29,13 @@ const WAIT_OPTION = /^(stop and )?wait for limit to reset\b/i;
 const REJECT_OPTION = /\b(no|deny), and tell claude what to do (differently|next)\b/i;
 const LIMIT_TEXT =
   /(limit reached|(reached|hit) your\b.{0,40}\blimit|out of usage credits|usage limit\b)/i;
+// On a limit screen the safe option contains stop/wait and never spends money.
+const SAFE_WAIT = /\b(stop|wait)\b/i;
+const COSTLY_OPTION = /continue|credit|upgrade|\bpay\b|\bplan\b/i;
+// Corroboration that a bare limit phrase is a real banner, not chat about limits:
+// an error/status glyph near "limit" (NOT the chat bullet ●, which prefixes
+// ordinary assistant messages), or a parseable reset time on screen.
+const LIMIT_BANNER = /[✗✳⏳⚠✻✘].{0,60}\blimit\b/;
 
 // Single digit only: real Claude Code menus have at most a handful of options,
 // and a tighter match shrinks the spoofable surface. Multi-select questions
@@ -74,6 +81,18 @@ function parseMenu(screen: string): MenuOption[] | null {
 export function detect(screen: string, now: Date): Detection {
   const menu = parseMenu(screen);
   if (menu) {
+    // A caret menu on a limit screen is ALWAYS a limit menu, even if the wait
+    // label drifted ("Stop", localized, reordered). Never let it reach the
+    // question path, where yolo would confirm the caret default — which is
+    // "Continue with usage credits" (spends money).
+    if (LIMIT_TEXT.test(screen)) {
+      const wait = menu.find((o) => SAFE_WAIT.test(o.label) && !COSTLY_OPTION.test(o.label));
+      return {
+        kind: 'limit-menu',
+        waitOption: wait ? wait.number : null,
+        resetAt: parseResetTime(screen, now),
+      };
+    }
     const wait = menu.find((o) => WAIT_OPTION.test(o.label));
     if (wait) {
       return { kind: 'limit-menu', waitOption: wait.number, resetAt: parseResetTime(screen, now) };
@@ -114,8 +133,14 @@ export function detect(screen: string, now: Date): Detection {
       question,
     };
   }
+  // Menu-less limit state: require corroboration (banner glyph or a parseable
+  // reset time) so ordinary chat mentioning "usage limit" doesn't schedule a
+  // spurious resume that types "continue" into a working session.
   if (LIMIT_TEXT.test(screen)) {
-    return { kind: 'limit-idle', resetAt: parseResetTime(screen, now) };
+    const resetAt = parseResetTime(screen, now);
+    if (LIMIT_BANNER.test(screen) || resetAt !== null) {
+      return { kind: 'limit-idle', resetAt };
+    }
   }
   return { kind: 'none' };
 }
@@ -130,13 +155,26 @@ export function parseResetTime(text: string, now: Date): Date | null {
     return new Date(now.getTime() + (hours * 60 + minutes) * 60_000);
   }
 
+  // Day-qualified ("3am tomorrow", "Thu 3am") — we can't place these on a
+  // same-day clock without guessing; the 30-min fallback is safer than a
+  // wrong-early resume.
+  if (/\b(tomorrow|today|mon|tue|wed|thu|fri|sat|sun)\b/i.test(text)) return null;
+
+  // Timezone suffix naming a zone other than the machine's — a local reading
+  // would resolve to the wrong absolute instant. Same-zone suffix is fine.
+  const tz = text.match(/\(([A-Za-z]+\/[A-Za-z_]+)\)/);
+  if (tz && tz[1] !== Intl.DateTimeFormat().resolvedOptions().timeZone) return null;
+
   const absolute = text.match(/resets?(?:\s+at)?\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i);
   if (absolute) {
     let hour = Number(absolute[1]) % 12;
     if (absolute[3]!.toLowerCase() === 'pm') hour += 12;
     const minute = Number(absolute[2] ?? 0);
     const candidate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hour, minute, 0);
-    if (candidate.getTime() <= now.getTime()) {
+    // Roll to tomorrow only when the time is comfortably in the past. A time
+    // that just passed is a stale banner from the reset we already waited out —
+    // keep it in the past so the caller retries now, not ~24h later.
+    if (now.getTime() - candidate.getTime() > 2 * 3600_000) {
       candidate.setDate(candidate.getDate() + 1);
     }
     return candidate;

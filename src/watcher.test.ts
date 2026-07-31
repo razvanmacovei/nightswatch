@@ -50,10 +50,11 @@ function harness(initialScreen: string, opts: { yolo?: boolean } = {}) {
   const sent: Array<{ text: string; newline: boolean }> = [];
   const events: JournalEvent[] = [];
   let screen: string | null = initialScreen;
+  const screenQueue: Array<string | null> = [];
   let now = new Date(2026, 6, 30, 1, 0, 0);
   const watcher = createWatcher({
     session: { id: 'S-1', name: 'pentx' },
-    readScreen: async () => screen,
+    readScreen: async () => (screenQueue.length > 0 ? screenQueue.shift()! : screen),
     send: async (text, opts) => {
       sent.push({ text, newline: opts.newline });
     },
@@ -69,6 +70,7 @@ function harness(initialScreen: string, opts: { yolo?: boolean } = {}) {
     sent,
     events,
     setScreen: (s: string | null) => (screen = s),
+    queueScreens: (...screens: Array<string | null>) => screenQueue.push(...screens),
     advance: (ms: number) => (now = new Date(now.getTime() + ms)),
   };
 }
@@ -98,6 +100,38 @@ describe('permission prompts', () => {
 });
 
 describe('limit handling', () => {
+  const LIMIT_NO_WAIT = `
+You've reached your usage limit · resets 3am
+
+❯ 1. Continue with usage credits
+  2. Upgrade your plan
+`;
+
+  test('holds without pressing a key when the wait option cannot be identified', async () => {
+    const h = harness(LIMIT_NO_WAIT);
+    await h.watcher.tick();
+    expect(h.sent).toHaveLength(0);
+    expect(h.events.map((e) => e.event)).toContain('limit-hold');
+  });
+
+  test('aborts stop-and-wait when the screen changes between read and send', async () => {
+    // First read is the limit menu; the confirming re-read is a working screen.
+    const h = harness(LIMIT_MENU);
+    h.queueScreens(LIMIT_MENU, WORKING);
+    await h.watcher.tick();
+    expect(h.sent).toHaveLength(0);
+  });
+
+  test('clamps a stale-banner reset to now so continue fires within minutes', async () => {
+    const h = harness(LIMIT_MENU);
+    await h.watcher.tick(); // selects wait; banner says "resets 3am"
+    h.setScreen('✗ 5-hour limit reached ∙ resets 3am\n\n❯');
+    h.advance(2 * 3600_000 + 2 * 60_000); // 03:02 — reset already passed
+    await h.watcher.tick();
+    expect(h.sent).toHaveLength(2);
+    expect(h.sent[1]).toEqual({ text: 'continue', newline: true });
+  });
+
   test('selects stop-and-wait and schedules the resume', async () => {
     const h = harness(LIMIT_MENU);
     await h.watcher.tick();
@@ -211,15 +245,33 @@ describe('question menus and yolo mode', () => {
     expect(h.sent).toEqual([{ text: '', newline: true }]);
   });
 
-  test('yolo toggles every unchecked option, moves to Submit and confirms', async () => {
+  test('yolo toggles every unchecked option then submits with CR', async () => {
+    // Validated on real Claude Code: CR submits the checkbox list directly.
     const h = harness(QUESTION_MULTISELECT, { yolo: true });
     await h.watcher.tick();
     expect(h.sent).toEqual([
       { text: '1', newline: false },
       { text: '2', newline: false },
-      { text: '[C', newline: false },
       { text: '', newline: true },
     ]);
+  });
+
+  test('aborts the answer when the screen changes between read and send', async () => {
+    // Classify a question, but the confirming re-read finds a limit menu —
+    // keys must NOT land blindly (option 1 there spends credits).
+    const h = harness(QUESTION_RECOMMENDED, { yolo: true });
+    h.queueScreens(QUESTION_RECOMMENDED, LIMIT_MENU);
+    await h.watcher.tick();
+    expect(h.sent).toHaveLength(0);
+  });
+
+  test('does not answer questions while waiting out a limit reset', async () => {
+    const h = harness(LIMIT_MENU, { yolo: true });
+    await h.watcher.tick(); // wait selected, resume scheduled
+    h.setScreen(QUESTION_RECOMMENDED);
+    h.advance(10_000);
+    await h.watcher.tick();
+    expect(h.sent).toHaveLength(1); // only the wait digit; no answer keys
   });
 
   test('yolo does not double-answer within the cooldown', async () => {

@@ -94,6 +94,52 @@ describe('detect', () => {
     expect(d.resetAt).toEqual(new Date(2026, 6, 30, 3, 0, 0));
   });
 
+  test('classifies a limit menu even when the wait label drifts (compact "Stop")', () => {
+    // The bundle carries a compact "Stop" wait label on narrow windows. Any
+    // label drift must stay a limit menu — never fall through to question-menu
+    // where yolo would confirm the caret default (= "Continue with usage credits").
+    const screen = `
+You've reached your usage limit · resets 3am
+
+  1. Continue with usage credits
+❯ 2. Stop
+  3. Upgrade your plan
+`;
+    const d = detect(screen, NOW);
+    expect(d).toMatchObject({ kind: 'limit-menu', waitOption: 2 });
+  });
+
+  test('holds (waitOption null) when no safe wait option can be identified', () => {
+    const screen = `
+You've reached your usage limit · resets 3am
+
+❯ 1. Continue with usage credits
+  2. Upgrade your plan
+`;
+    const d = detect(screen, NOW);
+    expect(d).toMatchObject({ kind: 'limit-menu', waitOption: null });
+  });
+
+  test('a caret menu on a limit screen is never a question-menu', () => {
+    const screen = `
+You've reached your usage limit · resets 3am
+
+❯ 1. Continue with usage credits
+  2. Stop
+`;
+    expect(detect(screen, NOW).kind).toBe('limit-menu');
+  });
+
+  test('chat text merely mentioning "usage limit" is not a limit state', () => {
+    const screen = `
+● When you reach your usage limit, Claude Code shows a menu.
+  The phrase "usage limit" appears in the banner text.
+
+❯
+`;
+    expect(detect(screen, NOW).kind).toBe('none');
+  });
+
   test('returns none for a working session', () => {
     expect(detect(WORKING, NOW).kind).toBe('none');
   });
@@ -269,10 +315,23 @@ describe('parseResetTime', () => {
     expect(parseResetTime('resets 3am', lateNow)).toEqual(new Date(2026, 6, 31, 3, 0, 0));
   });
 
-  test('parses "resets at" with a timezone suffix', () => {
-    expect(parseResetTime('Your limit will reset at 11:59pm (Europe/Bucharest)', NOW)).toEqual(
+  test('parses "resets at" with a timezone suffix matching the local zone', () => {
+    const localTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    expect(parseResetTime(`Your limit will reset at 11:59pm (${localTz})`, NOW)).toEqual(
       new Date(2026, 6, 30, 23, 59, 0),
     );
+  });
+
+  test('returns null for a foreign timezone suffix (local guess could be early)', () => {
+    // A named zone that differs from the machine's would parse to the wrong
+    // absolute instant; the 30-min fallback is safer than a wrong-early resume.
+    expect(parseResetTime('resets at 6pm (Pacific/Kiritimati)', NOW)).toBeNull();
+  });
+
+  test('returns null for day-qualified resets instead of guessing today', () => {
+    expect(parseResetTime('resets 3am tomorrow', NOW)).toBeNull();
+    expect(parseResetTime('resets tomorrow at 3am', NOW)).toBeNull();
+    expect(parseResetTime('resets Thu 3am', NOW)).toBeNull();
   });
 
   test('parses relative "resets in Xh Ym"', () => {
@@ -283,9 +342,14 @@ describe('parseResetTime', () => {
     expect(parseResetTime('resets in 45m', NOW)).toEqual(new Date(2026, 6, 30, 1, 45, 0));
   });
 
-  test('parses noon and midnight correctly', () => {
+  test('a bare time that just passed stays in the past (stale banner, not +24h)', () => {
+    // "resets 3am" read at 03:02 is the reset we just waited out, not tomorrow.
+    const justAfter = new Date(2026, 6, 30, 3, 2, 0);
+    expect(parseResetTime('resets 3am', justAfter)).toEqual(new Date(2026, 6, 30, 3, 0, 0));
+  });
+
+  test('parses noon correctly', () => {
     expect(parseResetTime('resets 12pm', NOW)).toEqual(new Date(2026, 6, 30, 12, 0, 0));
-    expect(parseResetTime('resets 12am', NOW)).toEqual(new Date(2026, 6, 31, 0, 0, 0));
   });
 
   test('returns null when nothing matches', () => {

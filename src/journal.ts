@@ -9,6 +9,7 @@ export interface JournalEvent {
     | 'question-detected'
     | 'question-answered'
     | 'limit-detected'
+    | 'limit-hold'
     | 'stop-and-wait-selected'
     | 'resume-scheduled'
     | 'resume-sent'

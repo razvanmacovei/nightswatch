@@ -1,4 +1,4 @@
-import { detect } from './detector.js';
+import { detect, type Detection } from './detector.js';
 import type { Journal } from './journal.js';
 
 export interface WatcherDeps {
@@ -49,7 +49,8 @@ export function createWatcher(deps: WatcherDeps): Watcher {
   };
 
   const scheduleResume = (resetAt: Date | null, nowMs: number) => {
-    const base = resetAt ? resetAt.getTime() : nowMs + deps.fallbackWaitMs;
+    // A reset time in the past (stale banner) means we're due now, not in ~24h.
+    const base = resetAt ? Math.max(resetAt.getTime(), nowMs) : nowMs + deps.fallbackWaitMs;
     resumeAt = base + deps.resumeMarginMs;
     record(
       'resume-scheduled',
@@ -77,15 +78,40 @@ export function createWatcher(deps: WatcherDeps): Watcher {
       const detection = detect(screen, deps.now());
       if (detection.kind !== 'question-menu') questionOnScreen = false;
 
+      // Re-read and re-classify immediately before any keystroke: the screen
+      // may have changed since the first read, and a key landing on a different
+      // menu (worst case the limit menu, where option 1 spends credits) is
+      // never acceptable. Returns the fresh same-kind detection, or null to abort.
+      const reconfirm = async <K extends Detection['kind']>(
+        kind: K,
+      ): Promise<Extract<Detection, { kind: K }> | null> => {
+        const fresh = await deps.readScreen();
+        if (fresh === null) {
+          record('session-gone', 'session no longer exists in iTerm2');
+          stopped = true;
+          return null;
+        }
+        const confirmed = detect(fresh, deps.now());
+        return confirmed.kind === kind ? (confirmed as Extract<Detection, { kind: K }>) : null;
+      };
+
       switch (detection.kind) {
         case 'limit-menu': {
           // A scheduled resume means we already chose stop-and-wait; a stale
           // menu on screen must not trigger a second selection.
           if (resumeAt === null && canSend(nowMs)) {
+            const confirmed = await reconfirm('limit-menu');
+            if (!confirmed) return;
             record('limit-detected', 'limit menu on screen');
-            await sendKey(String(detection.waitOption), nowMs);
-            record('stop-and-wait-selected', `chose option ${detection.waitOption}`);
-            scheduleResume(detection.resetAt, nowMs);
+            if (confirmed.waitOption === null) {
+              // No option safely identifiable as stop-and-wait: never guess
+              // (a wrong digit could buy credits or upgrade). Hold and wait.
+              record('limit-hold', 'no safe wait option found — holding for manual action');
+              return;
+            }
+            await sendKey(String(confirmed.waitOption), nowMs);
+            record('stop-and-wait-selected', `chose option ${confirmed.waitOption}`);
+            scheduleResume(confirmed.resetAt, nowMs);
           }
           return;
         }
@@ -101,9 +127,12 @@ export function createWatcher(deps: WatcherDeps): Watcher {
           return;
         }
         case 'permission-prompt': {
-          if (canSend(nowMs)) {
-            await sendKey(String(detection.yesOption), nowMs);
-            record('auto-approve', detection.question || 'permission prompt approved');
+          // Guard on resumeAt too: while waiting out a limit, send nothing.
+          if (resumeAt === null && canSend(nowMs)) {
+            const confirmed = await reconfirm('permission-prompt');
+            if (!confirmed) return;
+            await sendKey(String(confirmed.yesOption), nowMs);
+            record('auto-approve', confirmed.question || 'permission prompt approved');
           }
           return;
         }
@@ -115,38 +144,36 @@ export function createWatcher(deps: WatcherDeps): Watcher {
             }
             return;
           }
-          if (canSend(nowMs)) {
-            if (detection.multiSelect) {
-              // The user's call: select everything, then submit. Digits toggle
-              // the checkboxes; right-arrow reaches the Submit tab; CR confirms.
-              for (const option of detection.toggleOptions) {
+          if (resumeAt === null && canSend(nowMs)) {
+            const confirmed = await reconfirm('question-menu');
+            if (!confirmed) return;
+            let answer: string;
+            if (confirmed.multiSelect) {
+              // Select everything, then submit. Digits toggle the checkboxes;
+              // CR submits the list (validated on real Claude Code — no
+              // arrow-key navigation to a Submit tab is needed).
+              for (const option of confirmed.toggleOptions) {
                 await deps.send(String(option), { newline: false });
               }
-              await deps.send('[C', { newline: false });
               await deps.send('', { newline: true });
-            } else if (detection.recommendedOption !== null) {
-              await deps.send(String(detection.recommendedOption), { newline: false });
-            } else {
-              // Enter confirms the highlighted default option.
-              await deps.send('', { newline: true });
-            }
-            lastSendAt = nowMs;
-            let answer: string;
-            if (detection.multiSelect) {
-              const picked = detection.toggleLabels
+              const picked = confirmed.toggleLabels
                 .map((l) => l.replace(/^\[\s\]\s*/, ''))
                 .join(', ');
               answer = `selected all (${picked}) and submitted`;
-            } else if (detection.recommendedLabel !== null) {
-              answer = `chose "${detection.recommendedLabel}"`;
-            } else if (detection.selectedLabel !== null) {
-              answer = `confirmed default "${detection.selectedLabel}"`;
+            } else if (confirmed.recommendedOption !== null) {
+              await deps.send(String(confirmed.recommendedOption), { newline: false });
+              answer = `chose "${confirmed.recommendedLabel}"`;
             } else {
-              answer = 'confirmed default option';
+              // Enter confirms the highlighted default option.
+              await deps.send('', { newline: true });
+              answer = confirmed.selectedLabel
+                ? `confirmed default "${confirmed.selectedLabel}"`
+                : 'confirmed default option';
             }
+            lastSendAt = nowMs;
             record(
               'question-answered',
-              detection.question ? `${answer} — ${detection.question}` : answer,
+              confirmed.question ? `${answer} — ${confirmed.question}` : answer,
             );
           }
           return;
