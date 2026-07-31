@@ -4,6 +4,7 @@ import {
   findClaudeProcesses,
   matchSessionsToProcesses,
   parsePsTable,
+  selectSessions,
 } from './discovery.js';
 import type { ItermSession } from './types.js';
 
@@ -75,6 +76,51 @@ describe('ancestorTtys', () => {
   test('stops at processes without a parent in the table', () => {
     const table = parsePsTable(PS_OUTPUT);
     expect(() => ancestorTtys(table, 90002)).not.toThrow();
+  });
+});
+
+describe('selectSessions', () => {
+  const discovered = [
+    {
+      session: { id: 'S-1', tty: '/dev/ttys000', name: 'a', windowIndex: 0, tabIndex: 0 },
+      process: { pid: 1, ppid: 0, tty: 'ttys000', command: 'claude' },
+      cwd: '/Users/x/Repositories/Personal/panoramabucovinei',
+    },
+    {
+      session: { id: 'S-2', tty: '/dev/ttys002', name: 'b', windowIndex: 1, tabIndex: 0 },
+      process: { pid: 2, ppid: 0, tty: 'ttys002', command: 'claude' },
+      cwd: '/tmp/scratch/realtest',
+    },
+  ];
+
+  test('--all selects everything', () => {
+    expect(selectSessions(discovered, '--all')).toEqual({ kind: 'all' });
+  });
+
+  test('a number selects by 1-based index', () => {
+    const r = selectSessions(discovered, '2');
+    expect(r).toMatchObject({ kind: 'one', session: { session: { id: 'S-2' } } });
+  });
+
+  test('an out-of-range number errors', () => {
+    expect(selectSessions(discovered, '9').kind).toBe('error');
+  });
+
+  test('text selects by unique directory substring, case-insensitive', () => {
+    const r = selectSessions(discovered, 'RealTest');
+    expect(r).toMatchObject({ kind: 'one', session: { session: { id: 'S-2' } } });
+  });
+
+  test('ambiguous text errors and lists the matches', () => {
+    const r = selectSessions(discovered, 'e');
+    expect(r.kind).toBe('error');
+    if (r.kind !== 'error') throw new Error('unreachable');
+    expect(r.message).toContain('panoramabucovinei');
+    expect(r.message).toContain('realtest');
+  });
+
+  test('text matching nothing errors', () => {
+    expect(selectSessions(discovered, 'nope-nothing').kind).toBe('error');
   });
 });
 

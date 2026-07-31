@@ -136,15 +136,49 @@ describe('question menus (AskUserQuestion)', () => {
   2. SQLite
 `;
 
+  // Captured verbatim from Claude Code v2.1.212 rendering a multiSelect
+  // AskUserQuestion: checkboxes after the number, 2-space descriptions,
+  // tab bar with a Submit tab, no space-to-toggle hint.
   const QUESTION_MULTISELECT = `
-● Which features do you want to enable?
-
-❯ ◻ 1. Newsletter
-  ◻ 2. Contact form
-  ◻ 3. Blog
-
-Space to toggle, Enter to confirm, a to select all, n to select none
+←  ☐ Features  ✔ Submit  →
+Which features do you want to enable?
+❯ 1. [ ] Alpha
+  Enable the Alpha feature.
+  2. [ ] Beta
+  Enable the Beta feature.
+  3. [x] Gamma
+  Enable the Gamma feature.
+  4. [ ] Type something
+     Submit
+──────────────────────────────────────────────────────────────────────────────
+  5. Chat about this
+Enter to select · ↑/↓ to navigate · Esc to cancel
 `;
+
+  // Captured verbatim from Claude Code v2.1.212 rendering AskUserQuestion.
+  const REAL_QUESTION = `
+❯ Use the AskUserQuestion tool now: ask me which color for the logo, options Red, Green, Blue, and mark Green as recommended. After I answer, ask a
+  second AskUserQuestion with multiSelect true: which features to enable, options Alpha, Beta, Gamma. After that answer, run with Bash: touch
+  yolo-proof.txt — then say TEST-COMPLETE and stop.
+──────────────────────────────────────────────────────────────────────────────
+ ☐ Logo color
+Which color should the logo be?
+❯ 1. Green (Recommended)
+     Marked as the recommended option per your request.
+  2. Red
+     Red logo color.
+  3. Blue
+     Blue logo color.
+  4. Type something.
+──────────────────────────────────────────────────────────────────────────────
+  5. Chat about this
+Enter to select · ↑/↓ to navigate · Esc to cancel
+`;
+
+  test('recognizes the real Claude Code question rendering with description lines', () => {
+    const d = detect(REAL_QUESTION, NOW);
+    expect(d).toMatchObject({ kind: 'question-menu', multiSelect: false, recommendedOption: 1 });
+  });
 
   test('recognizes a single-select question and finds the recommended option', () => {
     const d = detect(QUESTION_SINGLE, NOW);
@@ -168,9 +202,35 @@ Space to toggle, Enter to confirm, a to select all, n to select none
     expect(d).toMatchObject({ kind: 'question-menu', multiSelect: false, recommendedOption: null });
   });
 
-  test('recognizes a multi-select question via the space-to-toggle hint', () => {
+  test('recognizes the real multi-select rendering via checkbox labels', () => {
     const d = detect(QUESTION_MULTISELECT, NOW);
     expect(d).toMatchObject({ kind: 'question-menu', multiSelect: true });
+  });
+
+  test('lists unchecked real options as toggle targets, skipping free-text and chat', () => {
+    const d = detect(QUESTION_MULTISELECT, NOW);
+    if (d.kind !== 'question-menu') throw new Error('unreachable');
+    // 3 is already checked; 4 is "Type something"; 5 is "Chat about this".
+    expect(d.toggleOptions).toEqual([1, 2]);
+  });
+
+  test('legacy space-to-toggle hint still marks multi-select', () => {
+    const screen = `
+● Which features?
+
+❯ 1. Newsletter
+  2. Contact form
+
+Space to toggle, Enter to confirm, a to select all
+`;
+    const d = detect(screen, NOW);
+    expect(d).toMatchObject({ kind: 'question-menu', multiSelect: true });
+  });
+
+  test('extracts the question text, not the key hints', () => {
+    const d = detect(QUESTION_MULTISELECT, NOW);
+    if (d.kind !== 'question-menu') throw new Error('unreachable');
+    expect(d.question).toBe('Which features do you want to enable?');
   });
 
   test('permission prompts still win over question classification', () => {

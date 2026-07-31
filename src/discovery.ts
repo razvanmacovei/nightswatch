@@ -50,6 +50,39 @@ export function ancestorTtys(table: ProcessInfo[], pid: number): string[] {
   return ttys;
 }
 
+export type SessionSelection =
+  | { kind: 'all' }
+  | { kind: 'one'; session: DiscoveredSession }
+  | { kind: 'error'; message: string };
+
+/**
+ * Resolve a watch selector. Numeric indexes match `nightswatch ls` order but
+ * are unstable (iTerm2 windows re-order by focus), so a directory substring
+ * is the reliable way to pin a session.
+ */
+export function selectSessions(
+  discovered: DiscoveredSession[],
+  selector: string,
+): SessionSelection {
+  if (selector === '--all') return { kind: 'all' };
+  if (/^\d+$/.test(selector)) {
+    const picked = discovered[Number(selector) - 1];
+    return picked
+      ? { kind: 'one', session: picked }
+      : { kind: 'error', message: `No session ${selector}. Run \`nightswatch ls\` (1-${discovered.length}).` };
+  }
+  const needle = selector.toLowerCase();
+  const matches = discovered.filter((d) => (d.cwd ?? '').toLowerCase().includes(needle));
+  if (matches.length === 1) return { kind: 'one', session: matches[0]! };
+  if (matches.length === 0) {
+    return { kind: 'error', message: `No session directory matches "${selector}".` };
+  }
+  return {
+    kind: 'error',
+    message: `"${selector}" matches ${matches.length} sessions: ${matches.map((m) => m.cwd).join(', ')}. Be more specific.`,
+  };
+}
+
 /** Match iTerm2 sessions to claude processes via the ancestor tty chain. */
 export function matchSessionsToProcesses(
   sessions: ItermSession[],

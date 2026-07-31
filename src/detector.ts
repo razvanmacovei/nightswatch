@@ -6,6 +6,8 @@ export type Detection =
       kind: 'question-menu';
       multiSelect: boolean;
       recommendedOption: number | null;
+      /** Numbers of unchecked checkbox options worth toggling (multi-select). */
+      toggleOptions: number[];
       question: string;
     }
   | { kind: 'none' };
@@ -30,6 +32,12 @@ const LIMIT_TEXT =
 const OPTION_LINE = /^\s*(❯\s*)?(?:[◻◼☐☑▢■]\s*)?([1-9])\.\s+(.+?)\s*$/;
 const MULTISELECT_HINT = /space to toggle/i;
 const RECOMMENDED = /\(recommended\)/i;
+// Real multi-select rendering puts a checkbox in the label: "1. [ ] Alpha".
+const UNCHECKED_BOX = /^\[\s\]/;
+const CHECKBOX = /^\[[\sxX✔]\]/;
+// Options that are not real answers: free-text input and side-channel chat.
+const NON_ANSWER_OPTION = /type something|chat about this/i;
+const KEY_HINT = /enter to select|to navigate|esc to cancel|space to toggle/i;
 
 /**
  * Extract a select-menu from the screen: two or more numbered options on
@@ -48,7 +56,10 @@ function parseMenu(screen: string): MenuOption[] | null {
     const match = line.match(OPTION_LINE);
     if (match) {
       current.push({ number: Number(match[2]), label: match[3]!, selected: Boolean(match[1]) });
-    } else if (line.trim() !== '') {
+    } else if (line.trim() !== '' && !/^\s/.test(line)) {
+      // Indented non-option lines are option descriptions (real AskUserQuestion
+      // rendering puts one under each option); they don't break the menu.
+      // Only flush on flush-left content like a question or separator line.
       flush();
     }
   }
@@ -77,16 +88,23 @@ export function detect(screen: string, now: Date): Detection {
     }
     // Any other caret menu is a question (AskUserQuestion or similar picker).
     const recommended = menu.find((o) => RECOMMENDED.test(o.label));
+    const answerOptions = menu.filter((o) => !NON_ANSWER_OPTION.test(o.label));
+    const multiSelect =
+      MULTISELECT_HINT.test(screen) || answerOptions.some((o) => CHECKBOX.test(o.label));
+    const lines = screen.split('\n').map((l) => l.trim());
     const question =
-      screen
-        .split('\n')
-        .map((l) => l.trim())
-        .filter((l) => l.length > 0 && !OPTION_LINE.test(l) && !MULTISELECT_HINT.test(l))
-        .pop() ?? '';
+      lines.filter((l) => l.endsWith('?') && !OPTION_LINE.test(l)).pop() ??
+      lines
+        .filter((l) => l.length > 0 && !OPTION_LINE.test(l) && !KEY_HINT.test(l))
+        .pop() ??
+      '';
     return {
       kind: 'question-menu',
-      multiSelect: MULTISELECT_HINT.test(screen),
+      multiSelect,
       recommendedOption: recommended ? recommended.number : null,
+      toggleOptions: answerOptions
+        .filter((o) => UNCHECKED_BOX.test(o.label))
+        .map((o) => o.number),
       question,
     };
   }

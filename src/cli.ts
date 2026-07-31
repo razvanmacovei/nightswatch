@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
 import { detect } from './detector.js';
-import { findClaudeProcesses, matchSessionsToProcesses } from './discovery.js';
+import { findClaudeProcesses, matchSessionsToProcesses, selectSessions } from './discovery.js';
 import { describeDetection, formatTable, shortenHome } from './format.js';
 import { createItermAdapter, type ItermAdapter } from './iterm.js';
 import { createJournal, readJournalEntries } from './journal.js';
@@ -31,8 +31,12 @@ const HELP = `nightswatch — keep your Claude Code sessions moving overnight
 Usage:
   nightswatch ls                 List Claude Code sessions running in iTerm2
   nightswatch watch <n>          Watch session <n> from \`nightswatch ls\`
+  nightswatch watch <dir>        Watch the session whose directory matches <dir>
   nightswatch watch --all        Watch every discovered session
-  nightswatch watch <n> --yolo   Also answer questions Claude asks (see below)
+  nightswatch watch <s> --yolo   Also answer questions Claude asks (see below)
+
+Prefer <dir> over <n> when other iTerm2 windows may open or refocus: numeric
+indexes follow window order, which changes; a directory match does not.
   nightswatch log [YYYY-MM-DD]   Show the journal for a day (default: today)
   nightswatch --version          Print the version
   nightswatch --help             Show this help
@@ -94,21 +98,14 @@ async function cmdWatch(iterm: ItermAdapter, selector: string, yolo: boolean): P
     return;
   }
 
-  let targets: DiscoveredSession[];
-  if (selector === '--all') {
-    targets = discovered;
-  } else {
-    const index = Number(selector);
-    const picked = Number.isInteger(index) ? discovered[index - 1] : undefined;
-    if (!picked) {
-      console.error(
-        `Unknown session "${selector}". Run \`nightswatch ls\` and pass a number 1-${discovered.length}, or --all.`,
-      );
-      process.exitCode = 1;
-      return;
-    }
-    targets = [picked];
+  const selection = selectSessions(discovered, selector);
+  if (selection.kind === 'error') {
+    console.error(selection.message);
+    process.exitCode = 1;
+    return;
   }
+  const targets: DiscoveredSession[] =
+    selection.kind === 'all' ? discovered : [selection.session];
 
   const home = homedir();
   const journal = createJournal(JOURNAL_DIR);

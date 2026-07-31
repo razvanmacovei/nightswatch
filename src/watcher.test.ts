@@ -33,12 +33,17 @@ const QUESTION_PLAIN = `
 `;
 
 const QUESTION_MULTISELECT = `
-● Which features do you want to enable?
-
-❯ ◻ 1. Newsletter
-  ◻ 2. Contact form
-
-Space to toggle, Enter to confirm, a to select all, n to select none
+←  ☐ Features  ✔ Submit  →
+Which features do you want to enable?
+❯ 1. [ ] Alpha
+  Enable the Alpha feature.
+  2. [ ] Beta
+  Enable the Beta feature.
+  3. [ ] Type something
+     Submit
+──────────────────────────────────────────────────────────────────────────────
+  4. Chat about this
+Enter to select · ↑/↓ to navigate · Esc to cancel
 `;
 
 function harness(initialScreen: string, opts: { yolo?: boolean } = {}) {
@@ -190,11 +195,13 @@ describe('question menus and yolo mode', () => {
     expect(h.sent).toEqual([{ text: '', newline: true }]);
   });
 
-  test('yolo selects all then confirms on multi-select questions', async () => {
+  test('yolo toggles every unchecked option, moves to Submit and confirms', async () => {
     const h = harness(QUESTION_MULTISELECT, { yolo: true });
     await h.watcher.tick();
     expect(h.sent).toEqual([
-      { text: 'a', newline: false },
+      { text: '1', newline: false },
+      { text: '2', newline: false },
+      { text: '[C', newline: false },
       { text: '', newline: true },
     ]);
   });

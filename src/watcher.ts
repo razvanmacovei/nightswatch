@@ -117,8 +117,12 @@ export function createWatcher(deps: WatcherDeps): Watcher {
           }
           if (canSend(nowMs)) {
             if (detection.multiSelect) {
-              // The user's call: select everything, then confirm.
-              await deps.send('a', { newline: false });
+              // The user's call: select everything, then submit. Digits toggle
+              // the checkboxes; right-arrow reaches the Submit tab; CR confirms.
+              for (const option of detection.toggleOptions) {
+                await deps.send(String(option), { newline: false });
+              }
+              await deps.send('[C', { newline: false });
               await deps.send('', { newline: true });
             } else if (detection.recommendedOption !== null) {
               await deps.send(String(detection.recommendedOption), { newline: false });

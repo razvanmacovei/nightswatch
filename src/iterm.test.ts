@@ -65,8 +65,18 @@ describe('sendText', () => {
   test('JSON-escapes the text payload', async () => {
     const { calls, run } = fakeRunner('null');
     const iterm = createItermAdapter(run);
-    await iterm.sendText('ABC-123', 'echo "hi"\\n', { newline: true });
-    expect(calls[0]).toContain(JSON.stringify('echo "hi"\\n'));
+    await iterm.sendText('ABC-123', 'echo-test', { newline: true });
+    expect(calls[0]).toContain(JSON.stringify('echo-test\r'));
+  });
+
+  test('submits with a carriage return, never a bare LF', async () => {
+    // Claude Code's TUI editor submits on CR; iTerm2's own `newline: true`
+    // appends LF, which just inserts a newline into the input box.
+    const { calls, run } = fakeRunner('null');
+    const iterm = createItermAdapter(run);
+    await iterm.sendText('ABC-123', 'continue', { newline: true });
+    expect(calls[0]).toContain(JSON.stringify('continue\r'));
+    expect(calls[0]).toContain('newline: false');
   });
 
   test('passes newline: false for bare keypresses', async () => {
@@ -74,5 +84,6 @@ describe('sendText', () => {
     const iterm = createItermAdapter(run);
     await iterm.sendText('ABC-123', '1', { newline: false });
     expect(calls[0]).toContain('newline: false');
+    expect(calls[0]).toContain(JSON.stringify('1'));
   });
 });

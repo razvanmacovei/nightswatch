@@ -73,9 +73,13 @@ function run() {${findSessionSnippet(sessionId)}
 
     async sendText(sessionId, text, opts) {
       assertSessionId(sessionId);
+      // Claude Code's TUI submits on CR. iTerm2's `newline: true` appends LF,
+      // which only inserts a newline into the input box — so we always write
+      // raw and append \r ourselves when a submit is wanted.
+      const payload = opts.newline ? `${text}\r` : text;
       const script = `
 function run() {${findSessionSnippet(sessionId)}
-  found.write({ text: ${JSON.stringify(text)}, newline: ${opts.newline ? 'true' : 'false'} });
+  found.write({ text: ${JSON.stringify(payload)}, newline: false });
   return 'null';
 }`;
       await run(script);
