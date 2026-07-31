@@ -193,8 +193,9 @@ function cmdLog(dateArg?: string): void {
     console.log(`${time}  [${e.sessionName}] ${e.event}${e.detail ? ` — ${e.detail}` : ''}`);
   }
   const approvals = entries.filter((e) => e.event === 'auto-approve').length;
+  const questions = entries.filter((e) => e.event === 'question-answered').length;
   const resumes = entries.filter((e) => e.event === 'resume-sent').length;
-  console.log(`\n${approvals} auto-approvals, ${resumes} resumes.`);
+  console.log(`\n${approvals} auto-approvals, ${questions} questions answered, ${resumes} resumes.`);
 }
 
 async function main(): Promise<void> {

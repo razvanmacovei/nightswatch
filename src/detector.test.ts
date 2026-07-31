@@ -180,6 +180,19 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
     expect(d).toMatchObject({ kind: 'question-menu', multiSelect: false, recommendedOption: 1 });
   });
 
+  test('exposes option labels so the journal can say what was answered', () => {
+    const d = detect(REAL_QUESTION, NOW);
+    if (d.kind !== 'question-menu') throw new Error('unreachable');
+    expect(d.recommendedLabel).toBe('Green (Recommended)');
+    expect(d.selectedLabel).toBe('Green (Recommended)');
+  });
+
+  test('exposes toggle labels for multi-select answers', () => {
+    const d = detect(QUESTION_MULTISELECT, NOW);
+    if (d.kind !== 'question-menu') throw new Error('unreachable');
+    expect(d.toggleLabels).toEqual(['[ ] Alpha', '[ ] Beta']);
+  });
+
   test('recognizes a single-select question and finds the recommended option', () => {
     const d = detect(QUESTION_SINGLE, NOW);
     expect(d).toMatchObject({ kind: 'question-menu', multiSelect: false, recommendedOption: 1 });

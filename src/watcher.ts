@@ -131,7 +131,23 @@ export function createWatcher(deps: WatcherDeps): Watcher {
               await deps.send('', { newline: true });
             }
             lastSendAt = nowMs;
-            record('question-answered', detection.question || 'question menu answered');
+            let answer: string;
+            if (detection.multiSelect) {
+              const picked = detection.toggleLabels
+                .map((l) => l.replace(/^\[\s\]\s*/, ''))
+                .join(', ');
+              answer = `selected all (${picked}) and submitted`;
+            } else if (detection.recommendedLabel !== null) {
+              answer = `chose "${detection.recommendedLabel}"`;
+            } else if (detection.selectedLabel !== null) {
+              answer = `confirmed default "${detection.selectedLabel}"`;
+            } else {
+              answer = 'confirmed default option';
+            }
+            record(
+              'question-answered',
+              detection.question ? `${answer} — ${detection.question}` : answer,
+            );
           }
           return;
         }

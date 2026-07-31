@@ -189,6 +189,22 @@ describe('question menus and yolo mode', () => {
     expect(h.events.map((e) => e.event)).toContain('question-answered');
   });
 
+  test('the journal detail says which answer was chosen', async () => {
+    const h = harness(QUESTION_RECOMMENDED, { yolo: true });
+    await h.watcher.tick();
+    const detail = h.events.find((e) => e.event === 'question-answered')?.detail ?? '';
+    expect(detail).toContain('English (Recommended)');
+    expect(detail).toContain('Which language should the landing page use?');
+  });
+
+  test('the multi-select journal detail lists the selected options', async () => {
+    const h = harness(QUESTION_MULTISELECT, { yolo: true });
+    await h.watcher.tick();
+    const detail = h.events.find((e) => e.event === 'question-answered')?.detail ?? '';
+    expect(detail).toContain('Alpha');
+    expect(detail).toContain('Beta');
+  });
+
   test('yolo confirms the highlighted default when nothing is recommended', async () => {
     const h = harness(QUESTION_PLAIN, { yolo: true });
     await h.watcher.tick();

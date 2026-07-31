@@ -6,8 +6,12 @@ export type Detection =
       kind: 'question-menu';
       multiSelect: boolean;
       recommendedOption: number | null;
+      recommendedLabel: string | null;
+      /** Label of the option the caret currently highlights. */
+      selectedLabel: string | null;
       /** Numbers of unchecked checkbox options worth toggling (multi-select). */
       toggleOptions: number[];
+      toggleLabels: string[];
       question: string;
     }
   | { kind: 'none' };
@@ -98,13 +102,15 @@ export function detect(screen: string, now: Date): Detection {
         .filter((l) => l.length > 0 && !OPTION_LINE.test(l) && !KEY_HINT.test(l))
         .pop() ??
       '';
+    const toggles = answerOptions.filter((o) => UNCHECKED_BOX.test(o.label));
     return {
       kind: 'question-menu',
       multiSelect,
       recommendedOption: recommended ? recommended.number : null,
-      toggleOptions: answerOptions
-        .filter((o) => UNCHECKED_BOX.test(o.label))
-        .map((o) => o.number),
+      recommendedLabel: recommended ? recommended.label : null,
+      selectedLabel: menu.find((o) => o.selected)?.label ?? null,
+      toggleOptions: toggles.map((o) => o.number),
+      toggleLabels: toggles.map((o) => o.label),
       question,
     };
   }
