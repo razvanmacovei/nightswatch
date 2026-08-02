@@ -3,8 +3,13 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
 import { detect } from './detector.js';
-import { findClaudeProcesses, matchSessionsToProcesses, selectSessions } from './discovery.js';
-import { describeDetection, formatTable, shortenHome } from './format.js';
+import {
+  findClaudeProcesses,
+  matchSessionsToProcesses,
+  selectSessions,
+  unwatchedSessions,
+} from './discovery.js';
+import { describeDetection, formatTable, shortenHome, summarizeJournal } from './format.js';
 import { createItermAdapter, type ItermAdapter } from './iterm.js';
 import { createJournal, readJournalEntries } from './journal.js';
 import { runJxa } from './jxa.js';
@@ -23,6 +28,9 @@ const POLL_INTERVAL_MS = envMs('NIGHTSWATCH_POLL_INTERVAL_MS', 3_000);
 const COOLDOWN_MS = envMs('NIGHTSWATCH_COOLDOWN_MS', 5_000);
 const RESUME_MARGIN_MS = envMs('NIGHTSWATCH_RESUME_MARGIN_MS', 60_000);
 const FALLBACK_WAIT_MS = envMs('NIGHTSWATCH_FALLBACK_WAIT_MS', 30 * 60_000);
+const POST_RESUME_QUIET_MS = envMs('NIGHTSWATCH_POST_RESUME_QUIET_MS', 3 * 60_000);
+// Rescanning spawns osascript + ps, so it runs far less often than the screen poll.
+const REDISCOVER_INTERVAL_MS = envMs('NIGHTSWATCH_REDISCOVER_INTERVAL_MS', 15_000);
 
 const JOURNAL_DIR = join(homedir(), '.nightswatch');
 
@@ -32,7 +40,7 @@ Usage:
   nightswatch ls                 List Claude Code sessions running in iTerm2
   nightswatch watch <n>          Watch session <n> from \`nightswatch ls\`
   nightswatch watch <dir>        Watch the session whose directory matches <dir>
-  nightswatch watch --all        Watch every discovered session
+  nightswatch watch --all        Watch every session, including ones opened later
   nightswatch watch <s> --yolo   Also answer questions Claude asks (see below)
 
 Prefer <dir> over <n> when other iTerm2 windows may open or refocus: numeric
@@ -43,7 +51,11 @@ indexes follow window order, which changes; a directory match does not.
 
 While watching, nightswatch auto-approves permission prompts (the plain "Yes"
 option) and, when a usage limit is hit, selects "Stop and wait for limit to
-reset", parses the reset time and sends "continue" once the window reopens.
+reset", parses the reset time and sends "continue" once the window reopens —
+once per reset, then journals whether the session actually came back.
+
+With --all, iTerm2 is rescanned every 15s and sessions opened after nightswatch
+started are adopted too, each journaled as a watch-start.
 
 With --yolo, question menus (AskUserQuestion) are answered too: the
 "(Recommended)" option when one exists, otherwise the highlighted default;
@@ -109,18 +121,20 @@ async function cmdWatch(iterm: ItermAdapter, selector: string, yolo: boolean): P
 
   const home = homedir();
   const journal = createJournal(JOURNAL_DIR);
-  const watchers = targets.map((d) => {
+  const watchers = new Map<string, { name: string; watcher: ReturnType<typeof createWatcher> }>();
+
+  const attach = (d: DiscoveredSession, picked: boolean) => {
     const name = shortenHome(d.cwd, home);
     journal.record({
       event: 'watch-start',
       sessionId: d.session.id,
       sessionName: name,
-      detail: `pid ${d.process.pid}, tty ${d.session.tty}`,
+      detail: `pid ${d.process.pid}, tty ${d.session.tty}${picked ? ' (started after nightswatch)' : ''}`,
     });
     log(
       `watching ${name} (window ${d.session.windowIndex}, tab ${d.session.tabIndex}) — auto-yes ON${yolo ? ', yolo ON' : ''}`,
     );
-    return {
+    watchers.set(d.session.id, {
       name,
       watcher: createWatcher({
         session: { id: d.session.id, name },
@@ -142,17 +156,23 @@ async function cmdWatch(iterm: ItermAdapter, selector: string, yolo: boolean): P
         cooldownMs: COOLDOWN_MS,
         resumeMarginMs: RESUME_MARGIN_MS,
         fallbackWaitMs: FALLBACK_WAIT_MS,
+        postResumeQuietMs: POST_RESUME_QUIET_MS,
         yolo,
       }),
-    };
-  });
+    });
+  };
+
+  for (const d of targets) attach(d, false);
 
   log(`journal: ${JOURNAL_DIR}`);
+  if (selection.kind === 'all') {
+    log(`rescanning for new sessions every ${Math.round(REDISCOVER_INTERVAL_MS / 1000)}s`);
+  }
 
   let shuttingDown = false;
   process.on('SIGINT', () => {
     shuttingDown = true;
-    for (const w of watchers) {
+    for (const w of watchers.values()) {
       journal.record({
         event: 'watch-stop',
         sessionId: '-',
@@ -164,14 +184,44 @@ async function cmdWatch(iterm: ItermAdapter, selector: string, yolo: boolean): P
     process.exit(0);
   });
 
+  let nextRediscover = Date.now() + REDISCOVER_INTERVAL_MS;
+  let idleReported = false;
+
   while (!shuttingDown) {
-    for (const w of watchers) {
-      if (!w.watcher.stopped) await w.watcher.tick();
+    for (const [id, w] of watchers) {
+      if (w.watcher.stopped) {
+        // Drop it so a session that only blipped (or a tab reused later) can be
+        // picked up again by the next rescan instead of staying invisible.
+        watchers.delete(id);
+        continue;
+      }
+      await w.watcher.tick();
     }
-    if (watchers.every((w) => w.watcher.stopped)) {
-      log('all sessions gone — exiting.');
-      return;
+
+    // --all is a standing instruction: sessions opened later belong to it too.
+    if (selection.kind === 'all' && Date.now() >= nextRediscover) {
+      nextRediscover = Date.now() + REDISCOVER_INTERVAL_MS;
+      try {
+        const fresh = await discover(iterm);
+        for (const d of unwatchedSessions(fresh, watchers.keys())) attach(d, true);
+      } catch {
+        // A failed rescan is transient (iTerm2 busy, ps hiccup); try again later.
+      }
     }
+
+    if (watchers.size === 0) {
+      if (selection.kind !== 'all') {
+        log('all sessions gone — exiting.');
+        return;
+      }
+      if (!idleReported) {
+        idleReported = true;
+        log('no sessions left — waiting for new ones (ctrl-c to stop).');
+      }
+    } else {
+      idleReported = false;
+    }
+
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
   }
 }
@@ -192,10 +242,7 @@ function cmdLog(dateArg?: string): void {
     const time = e.at.slice(11, 19);
     console.log(`${time}  [${e.sessionName}] ${e.event}${e.detail ? ` — ${e.detail}` : ''}`);
   }
-  const approvals = entries.filter((e) => e.event === 'auto-approve').length;
-  const questions = entries.filter((e) => e.event === 'question-answered').length;
-  const resumes = entries.filter((e) => e.event === 'resume-sent').length;
-  console.log(`\n${approvals} auto-approvals, ${questions} questions answered, ${resumes} resumes.`);
+  console.log(`\n${summarizeJournal(entries)}.`);
 }
 
 async function main(): Promise<void> {

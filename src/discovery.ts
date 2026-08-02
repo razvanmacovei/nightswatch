@@ -83,6 +83,15 @@ export function selectSessions(
   };
 }
 
+/** Sessions from a fresh discovery that no watcher has claimed yet. */
+export function unwatchedSessions(
+  discovered: DiscoveredSession[],
+  watchedIds: Iterable<string>,
+): DiscoveredSession[] {
+  const watched = new Set(watchedIds);
+  return discovered.filter((d) => !watched.has(d.session.id));
+}
+
 /** Match iTerm2 sessions to claude processes via the ancestor tty chain. */
 export function matchSessionsToProcesses(
   sessions: ItermSession[],

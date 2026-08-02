@@ -1,4 +1,5 @@
 import type { Detection } from './detector.js';
+import type { JournalEntry } from './journal.js';
 
 export function shortenHome(path: string | undefined, home: string): string {
   if (!path) return '-';
@@ -25,6 +26,25 @@ export function describeDetection(detection: Detection): string {
         : 'limit hit';
     }
   }
+}
+
+function plural(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? '' : 's'}`;
+}
+
+export function summarizeJournal(entries: JournalEntry[]): string {
+  const count = (event: JournalEntry['event']) => entries.filter((e) => e.event === event).length;
+  const confirmed = count('resume-confirmed');
+  const failed = count('resume-failed');
+  // A resume is only interesting together with its outcome: a run full of
+  // "resume-sent" with nothing confirmed is the signal something went wrong.
+  const outcome =
+    confirmed || failed ? ` (${confirmed} confirmed, ${failed} failed)` : '';
+  return [
+    plural(count('auto-approve'), 'auto-approval'),
+    `${plural(count('question-answered'), 'question')} answered`,
+    `${plural(count('resume-sent'), 'resume')}${outcome}`,
+  ].join(', ');
 }
 
 export function formatTable(headers: string[], rows: string[][]): string[] {

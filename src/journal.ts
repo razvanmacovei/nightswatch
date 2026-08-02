@@ -13,6 +13,8 @@ export interface JournalEvent {
     | 'stop-and-wait-selected'
     | 'resume-scheduled'
     | 'resume-sent'
+    | 'resume-confirmed'
+    | 'resume-failed'
     | 'session-gone'
     | 'error';
   sessionId: string;

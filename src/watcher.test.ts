@@ -63,6 +63,7 @@ function harness(initialScreen: string, opts: { yolo?: boolean } = {}) {
     cooldownMs: 5_000,
     resumeMarginMs: 60_000,
     fallbackWaitMs: 30 * 60_000,
+    postResumeQuietMs: 3 * 60_000,
     yolo: opts.yolo ?? false,
   });
   return {
@@ -197,12 +198,89 @@ Usage limit reached.
     h.advance(2 * 3600_000 + 2 * 60_000);
     await h.watcher.tick(); // resume sent
     expect(h.sent).toHaveLength(2);
-    h.advance(10_000);
     h.setScreen('✗ 5-hour limit reached ∙ resets 4am\n\n❯');
+    h.advance(4 * 60_000); // past the post-resume quiet window
     await h.watcher.tick(); // still limited — must reschedule, not spam
     await h.watcher.tick();
     expect(h.sent).toHaveLength(2);
     expect(h.events.filter((e) => e.event === 'resume-scheduled').length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('resume outcome', () => {
+  const BANNER_3AM = '✗ 5-hour limit reached ∙ resets 3am\n\n❯';
+
+  /** Runs a limit cycle up to and including the resume keystroke at 03:02. */
+  async function resumed() {
+    const h = harness(LIMIT_MENU); // 01:00, banner says "resets 3am"
+    await h.watcher.tick(); // selects stop-and-wait, schedules 3am + margin
+    h.setScreen('❯');
+    h.advance(2 * 3600_000 + 2 * 60_000); // 03:02
+    await h.watcher.tick(); // resume sent
+    expect(h.sent).toHaveLength(2);
+    return h;
+  }
+
+  test('never resumes twice for a reset time it already resumed for', async () => {
+    const h = await resumed();
+    // The banner stays in the scrollback long after the session is running again.
+    h.setScreen(BANNER_3AM);
+    for (let i = 0; i < 10; i++) {
+      h.advance(60_000);
+      await h.watcher.tick();
+    }
+    expect(h.sent).toHaveLength(2);
+  });
+
+  test('journals the stale banner as a confirmed resume, once', async () => {
+    const h = await resumed();
+    h.setScreen(BANNER_3AM);
+    for (let i = 0; i < 10; i++) {
+      h.advance(60_000);
+      await h.watcher.tick();
+    }
+    expect(h.events.filter((e) => e.event === 'resume-confirmed')).toHaveLength(1);
+  });
+
+  test('journals resume-confirmed once the limit clears', async () => {
+    const h = await resumed();
+    h.setScreen(WORKING);
+    h.advance(5_000);
+    await h.watcher.tick();
+    h.advance(5_000);
+    await h.watcher.tick();
+    expect(h.events.filter((e) => e.event === 'resume-confirmed')).toHaveLength(1);
+  });
+
+  test('holds fire while the quiet window runs, even with no parseable reset', async () => {
+    const h = await resumed();
+    h.setScreen('✗ 5-hour limit reached\n\n❯');
+    h.advance(60_000); // inside the 3m quiet window
+    const before = h.events.length;
+    await h.watcher.tick();
+    expect(h.sent).toHaveLength(2);
+    expect(h.events.slice(before)).toEqual([]); // nothing decided yet
+  });
+
+  test('journals resume-failed and reschedules when the limit outlives the quiet window', async () => {
+    const h = await resumed();
+    h.setScreen('✗ 5-hour limit reached ∙ resets 4am\n\n❯'); // a genuinely new limit
+    h.advance(4 * 60_000);
+    await h.watcher.tick();
+    expect(h.events.filter((e) => e.event === 'resume-failed')).toHaveLength(1);
+    expect(h.events.filter((e) => e.event === 'resume-scheduled')).toHaveLength(2);
+    expect(h.sent).toHaveLength(2);
+  });
+
+  test('resumes again for a later reset time after a failed resume', async () => {
+    const h = await resumed();
+    h.setScreen('✗ 5-hour limit reached ∙ resets 4am\n\n❯');
+    h.advance(4 * 60_000); // 03:06 — resume-failed, reschedules for 4am
+    await h.watcher.tick();
+    h.advance(55 * 60_000); // 04:01, past the margin
+    await h.watcher.tick();
+    expect(h.sent).toHaveLength(3);
+    expect(h.sent[2]).toEqual({ text: 'continue', newline: true });
   });
 });
 

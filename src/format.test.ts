@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
-import { describeDetection, formatTable, shortenHome } from './format.js';
+import { describeDetection, formatTable, shortenHome, summarizeJournal } from './format.js';
+import type { JournalEntry } from './journal.js';
 
 describe('shortenHome', () => {
   test('replaces the home prefix with ~', () => {
@@ -50,5 +51,35 @@ describe('formatTable', () => {
       '  1  ~/short               working / idle',
       '  2  ~/a-much-longer-path  limit hit',
     ]);
+  });
+});
+
+describe('summarizeJournal', () => {
+  const entry = (event: JournalEntry['event']): JournalEntry => ({
+    at: '2026-08-02T15:21:03',
+    event,
+    sessionId: 'S-1',
+    sessionName: 'carpathwise',
+    detail: '',
+  });
+
+  test('counts approvals, answered questions and resumes', () => {
+    const line = summarizeJournal([
+      entry('auto-approve'),
+      entry('auto-approve'),
+      entry('question-answered'),
+      entry('resume-sent'),
+    ]);
+    expect(line).toBe('2 auto-approvals, 1 question answered, 1 resume');
+  });
+
+  test('reports how many resumes were confirmed and how many failed', () => {
+    const line = summarizeJournal([
+      entry('resume-sent'),
+      entry('resume-confirmed'),
+      entry('resume-sent'),
+      entry('resume-failed'),
+    ]);
+    expect(line).toBe('0 auto-approvals, 0 questions answered, 2 resumes (1 confirmed, 1 failed)');
   });
 });

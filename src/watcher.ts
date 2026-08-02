@@ -14,6 +14,8 @@ export interface WatcherDeps {
   resumeMarginMs: number;
   /** Wait applied when a limit is detected but no reset time is parseable. */
   fallbackWaitMs: number;
+  /** Grace period after a resume before a lingering limit counts as a failure. */
+  postResumeQuietMs: number;
   /** YOLO mode: also answer question menus (recommended option / select all). */
   yolo?: boolean;
 }
@@ -29,6 +31,12 @@ export function createWatcher(deps: WatcherDeps): Watcher {
   let lastSendAt = 0;
   let resumeAt: number | null = null;
   let questionOnScreen = false;
+  /** Reset time the pending resume was scheduled from, in ms (null = unparseable). */
+  let pendingResetAt: number | null = null;
+  /** Latest reset time we have already sent a "continue" for. */
+  let resumedForResetAt: number | null = null;
+  /** While set, a resume is awaiting its outcome; the value is its decision deadline. */
+  let outcomeDeadline: number | null = null;
 
   const record = (event: Parameters<Journal['record']>[0]['event'], detail: string) => {
     journal.record({ event, sessionId: session.id, sessionName: session.name, detail });
@@ -45,13 +53,28 @@ export function createWatcher(deps: WatcherDeps): Watcher {
     resumeAt = null;
     await deps.send('continue', { newline: true });
     lastSendAt = nowMs;
+    // Remember what we resumed for: the limit banner stays in the terminal
+    // scrollback afterwards, and re-resuming for the same reset time would type
+    // "continue" into a session that is already running.
+    if (pendingResetAt !== null) {
+      resumedForResetAt = resumedForResetAt === null
+        ? pendingResetAt
+        : Math.max(resumedForResetAt, pendingResetAt);
+    }
+    outcomeDeadline = nowMs + deps.postResumeQuietMs;
     record('resume-sent', 'sent "continue" after limit reset');
   };
+
+  /** True when a limit banner only repeats a reset we have already resumed for. */
+  const isStaleBanner = (resetAt: Date | null) =>
+    resumedForResetAt !== null && resetAt !== null && resetAt.getTime() <= resumedForResetAt;
 
   const scheduleResume = (resetAt: Date | null, nowMs: number) => {
     // A reset time in the past (stale banner) means we're due now, not in ~24h.
     const base = resetAt ? Math.max(resetAt.getTime(), nowMs) : nowMs + deps.fallbackWaitMs;
     resumeAt = base + deps.resumeMarginMs;
+    pendingResetAt = resetAt ? resetAt.getTime() : null;
+    outcomeDeadline = null;
     record(
       'resume-scheduled',
       resetAt
@@ -77,6 +100,15 @@ export function createWatcher(deps: WatcherDeps): Watcher {
 
       const detection = detect(screen, deps.now());
       if (detection.kind !== 'question-menu') questionOnScreen = false;
+
+      // A resume is proven by the limit leaving the screen. The banner itself
+      // lingers in the scrollback for as long as nothing scrolls it away, so it
+      // is never on its own evidence that the session is still stuck.
+      const limitOnScreen = detection.kind === 'limit-idle' || detection.kind === 'limit-menu';
+      if (outcomeDeadline !== null && !limitOnScreen) {
+        outcomeDeadline = null;
+        record('resume-confirmed', 'limit cleared — session is running again');
+      }
 
       // Re-read and re-classify immediately before any keystroke: the screen
       // may have changed since the first read, and a key landing on a different
@@ -116,14 +148,30 @@ export function createWatcher(deps: WatcherDeps): Watcher {
           return;
         }
         case 'limit-idle': {
-          if (resumeAt === null) {
-            record('limit-detected', 'session stopped on usage limit');
-            scheduleResume(detection.resetAt, nowMs);
-          } else if (nowMs >= resumeAt) {
+          if (resumeAt !== null) {
             // The banner often stays on screen right up to the reset, so the
             // resume must fire from this state too, not only from 'none'.
-            await sendResume(nowMs);
+            if (nowMs >= resumeAt) await sendResume(nowMs);
+            return;
           }
+          if (outcomeDeadline !== null) {
+            // Give the resume time to land before reading the screen as a verdict.
+            if (nowMs < outcomeDeadline) return;
+            outcomeDeadline = null;
+            if (isStaleBanner(detection.resetAt)) {
+              record(
+                'resume-confirmed',
+                'banner still on screen but its reset time has passed — treating it as scrollback',
+              );
+              return;
+            }
+            record('resume-failed', 'limit still active after the resume — rescheduling');
+            scheduleResume(detection.resetAt, nowMs);
+            return;
+          }
+          if (isStaleBanner(detection.resetAt)) return;
+          record('limit-detected', 'session stopped on usage limit');
+          scheduleResume(detection.resetAt, nowMs);
           return;
         }
         case 'permission-prompt': {

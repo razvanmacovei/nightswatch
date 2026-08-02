@@ -5,8 +5,9 @@ import {
   matchSessionsToProcesses,
   parsePsTable,
   selectSessions,
+  unwatchedSessions,
 } from './discovery.js';
-import type { ItermSession } from './types.js';
+import type { DiscoveredSession, ItermSession } from './types.js';
 
 // Real-world shape captured on macOS, including the nested-PTY case where a
 // shell wrapper (kiro-cli-term) gives claude a different tty than the iTerm2 tab.
@@ -146,5 +147,22 @@ describe('matchSessionsToProcesses', () => {
     const procs = findClaudeProcesses(table);
     const matched = matchSessionsToProcesses(sessions, table, procs);
     expect(matched.some((m) => m.session.id === 'S-CCC')).toBe(false);
+  });
+});
+
+describe('unwatchedSessions', () => {
+  const session = (id: string): DiscoveredSession => ({
+    session: { id, tty: '/dev/ttys000', name: 'claude', windowIndex: 0, tabIndex: 0 },
+    process: { pid: 1, ppid: 0, tty: '/dev/ttys000', command: 'claude' },
+    cwd: `/repo/${id}`,
+  });
+
+  test('returns only the sessions that are not already watched', () => {
+    const found = unwatchedSessions([session('S-A'), session('S-B')], ['S-A']);
+    expect(found.map((d) => d.session.id)).toEqual(['S-B']);
+  });
+
+  test('returns nothing when every session is already watched', () => {
+    expect(unwatchedSessions([session('S-A')], ['S-A', 'S-B'])).toEqual([]);
   });
 });

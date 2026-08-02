@@ -16,7 +16,8 @@ way — and keeps them moving:
 - **Auto-approves permission prompts** (always the plain "Yes" option)
 - **Handles usage limits**: selects *Stop and wait for limit to reset*, parses
   the reset time from the screen, and sends `continue` the moment the window
-  reopens
+  reopens — once per limit, then confirms the session actually came back
+- **Picks up new sessions** opened after it started, when run with `--all`
 - **Keeps a journal** of everything it did while you slept
 
 ```
@@ -29,11 +30,14 @@ $ nightswatch watch --all
 23:41:02 watching ~/Repositories/work (window 0, tab 0) — auto-yes ON
 23:41:02 watching ~/Repositories/side (window 1, tab 0) — auto-yes ON
 23:41:02 journal: /Users/you/.nightswatch
+23:41:02 rescanning for new sessions every 15s
+23:52:30 watching ~/Repositories/third (window 2, tab 0) — auto-yes ON
 23:58:11 [~/Repositories/work] auto-approve — Do you want to proceed?
 02:14:03 [~/Repositories/work] limit-detected — limit menu on screen
 02:14:03 [~/Repositories/work] stop-and-wait-selected — chose option 2
 02:14:03 [~/Repositories/work] resume-scheduled — reset parsed as 2026-07-30T03:00:00
 03:01:00 [~/Repositories/work] resume-sent — sent "continue" after limit reset
+03:04:03 [~/Repositories/work] resume-confirmed — limit cleared — session is running again
 
 $ nightswatch log
 … everything that happened overnight, plus a summary.
@@ -72,6 +76,24 @@ stalled. With `--yolo` it answers them too:
 
 YOLO means what it says: Claude's own judgment drives every fork in the road
 overnight. Use it on sessions where any reasonable answer beats a stalled one.
+
+### Watching everything
+
+`--all` is a standing instruction, not a snapshot: every 15 seconds nightswatch
+rescans iTerm2 and adopts any Claude Code session that appeared since it
+started, journaling a `watch-start` for it. A session that goes away is dropped
+and re-adopted if it comes back, and `--all` keeps waiting even when no
+sessions are left. Watching a single session still exits once that session is
+gone.
+
+### Resuming after a limit
+
+A limit banner stays in the terminal scrollback long after the session is
+running again, so nightswatch never treats it alone as proof the session is
+still stuck. It sends `continue` at most once per reset time, then watches the
+outcome: the limit clearing is journaled as `resume-confirmed`, and a limit
+that outlives the three-minute grace period as `resume-failed` followed by a
+fresh schedule.
 
 Leave `nightswatch watch` running in its own terminal tab overnight. Stop it
 any time with `Ctrl+C` — the watched sessions themselves are untouched; they
