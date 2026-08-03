@@ -23,6 +23,7 @@ const QUESTION_RECOMMENDED = `
 
 ❯ 1. Romanian
   2. English (Recommended)
+Enter to select · ↑/↓ to navigate · Esc to cancel
 `;
 
 const QUESTION_PLAIN = `
@@ -30,6 +31,7 @@ const QUESTION_PLAIN = `
 
 ❯ 1. Postgres
   2. SQLite
+Enter to select · ↑/↓ to navigate · Esc to cancel
 `;
 
 const QUESTION_MULTISELECT = `
@@ -357,6 +359,33 @@ describe('question menus and yolo mode', () => {
     await h.watcher.tick();
     await h.watcher.tick();
     expect(h.sent).toHaveLength(1);
+  });
+
+  test('gives up on a menu that never clears instead of answering it forever', async () => {
+    // A menu that survives our answer is either a misread screen or a stuck
+    // one; either way, keys must not rain into the session all night.
+    const h = harness(QUESTION_PLAIN, { yolo: true });
+    for (let i = 0; i < 8; i++) {
+      await h.watcher.tick();
+      h.advance(6_000);
+    }
+    expect(h.sent).toHaveLength(3);
+    expect(h.events.filter((e) => e.event === 'question-stuck')).toHaveLength(1);
+  });
+
+  test('a question answered after the screen changed starts a fresh attempt count', async () => {
+    const h = harness(QUESTION_PLAIN, { yolo: true });
+    for (let i = 0; i < 5; i++) {
+      await h.watcher.tick();
+      h.advance(6_000);
+    }
+    expect(h.sent).toHaveLength(3);
+    h.setScreen(WORKING);
+    await h.watcher.tick();
+    h.advance(6_000);
+    h.setScreen(QUESTION_PLAIN);
+    await h.watcher.tick();
+    expect(h.sent).toHaveLength(4);
   });
 
   test('sequential questions are answered one per cooldown window', async () => {

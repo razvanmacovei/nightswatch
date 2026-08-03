@@ -25,12 +25,23 @@ export interface Watcher {
   readonly stopped: boolean;
 }
 
+/**
+ * How many times the same question may be answered before we stop. A real menu
+ * disappears once answered; one that keeps coming back is a misread screen or a
+ * stuck UI, and either way more keystrokes only make the mess bigger.
+ */
+const MAX_SAME_ANSWERS = 3;
+
 export function createWatcher(deps: WatcherDeps): Watcher {
   const { session, journal } = deps;
   let stopped = false;
   let lastSendAt = 0;
   let resumeAt: number | null = null;
   let questionOnScreen = false;
+  /** Identity of the question yolo last answered, and how often in a row. */
+  let lastAnswerKey: string | null = null;
+  let sameAnswers = 0;
+  let stuckReported = false;
   /** Reset time the pending resume was scheduled from, in ms (null = unparseable). */
   let pendingResetAt: number | null = null;
   /** Latest reset time we have already sent a "continue" for. */
@@ -99,7 +110,13 @@ export function createWatcher(deps: WatcherDeps): Watcher {
       }
 
       const detection = detect(screen, deps.now());
-      if (detection.kind !== 'question-menu') questionOnScreen = false;
+      if (detection.kind !== 'question-menu') {
+        questionOnScreen = false;
+        // The menu is gone, so whatever comes next is a new question.
+        lastAnswerKey = null;
+        sameAnswers = 0;
+        stuckReported = false;
+      }
 
       // A resume is proven by the limit leaving the screen. The banner itself
       // lingers in the scrollback for as long as nothing scrolls it away, so it
@@ -195,6 +212,24 @@ export function createWatcher(deps: WatcherDeps): Watcher {
           if (resumeAt === null && canSend(nowMs)) {
             const confirmed = await reconfirm('question-menu');
             if (!confirmed) return;
+            const key = [
+              confirmed.question,
+              confirmed.selectedLabel,
+              confirmed.recommendedLabel,
+              ...confirmed.toggleLabels,
+            ].join(' ');
+            if (key === lastAnswerKey && sameAnswers >= MAX_SAME_ANSWERS) {
+              if (!stuckReported) {
+                stuckReported = true;
+                record(
+                  'question-stuck',
+                  `still on screen after ${MAX_SAME_ANSWERS} answers — leaving it alone${
+                    confirmed.question ? `: ${confirmed.question}` : ''
+                  }`,
+                );
+              }
+              return;
+            }
             let answer: string;
             if (confirmed.multiSelect) {
               // Select everything, then submit. Digits toggle the checkboxes;
@@ -219,6 +254,8 @@ export function createWatcher(deps: WatcherDeps): Watcher {
                 : 'confirmed default option';
             }
             lastSendAt = nowMs;
+            sameAnswers = key === lastAnswerKey ? sameAnswers + 1 : 1;
+            lastAnswerKey = key;
             record(
               'question-answered',
               confirmed.question ? `${answer} — ${confirmed.question}` : answer,

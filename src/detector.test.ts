@@ -164,15 +164,34 @@ You've reached your usage limit · resets 3am
 `;
     expect(detect(screen, NOW).kind).toBe('none');
   });
+
+  test('does not treat a numbered list typed into the input box as a menu', () => {
+    // Claude Code's own prompt line starts with ❯ — the same glyph a menu uses
+    // for its selection caret. A numbered list typed there is the user talking,
+    // not a menu, and yolo pressing Enter on it submits text they never sent.
+    const screen = `
+────────────────────────────────────────────────────────────────────────────
+❯ 1. try/catch pe runSend — notifications-manager.tsx:294
+  2. contorul de invitații neacoperite pe pagina de notificări
+  3. butonul de test care trimite mesajul real randat
+  astea le mai facem ?
+────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · esc to interrupt · ← for agents
+`;
+    expect(detect(screen, NOW).kind).toBe('none');
+  });
 });
 
 describe('question menus (AskUserQuestion)', () => {
+  // The key-hint footer is part of every real select rendering; fixtures carry
+  // it because detection requires it (see "input box" regression test above).
   const QUESTION_SINGLE = `
 ● Which language should the landing page use?
 
 ❯ 1. Romanian (Recommended)
   2. English
   3. Both languages
+Enter to select · ↑/↓ to navigate · Esc to cancel
 `;
 
   const QUESTION_SINGLE_NO_RECOMMENDED = `
@@ -180,6 +199,7 @@ describe('question menus (AskUserQuestion)', () => {
 
 ❯ 1. Postgres
   2. SQLite
+Enter to select · ↑/↓ to navigate · Esc to cancel
 `;
 
   // Captured verbatim from Claude Code v2.1.212 rendering a multiSelect
@@ -251,9 +271,36 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
 ❯ 1. Free
   2. Pro (Recommended)
   3. Enterprise
+↑/↓ to navigate · Enter to select · Esc to cancel
 `;
     const d = detect(screen, NOW);
     expect(d).toMatchObject({ kind: 'question-menu', recommendedOption: 2 });
+  });
+
+  test('a caret menu with no key-hint footer under it is not a question', () => {
+    const screen = `
+● Pick a plan:
+
+❯ 1. Free
+  2. Pro (Recommended)
+  3. Enterprise
+`;
+    expect(detect(screen, NOW).kind).toBe('none');
+  });
+
+  test('a key hint left far above in the scrollback does not vouch for a menu', () => {
+    const screen = `
+Enter to select · ↑/↓ to navigate · Esc to cancel
+● an answered menu scrolled up here
+
+❯ 1. first line of something the user typed
+  2. second line
+  3. third line
+  4. fourth line
+  5. fifth line
+  6. sixth line
+`;
+    expect(detect(screen, NOW).kind).toBe('none');
   });
 
   test('single-select without a recommendation has no recommendedOption', () => {

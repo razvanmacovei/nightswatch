@@ -8,6 +8,7 @@ export interface JournalEvent {
     | 'auto-approve'
     | 'question-detected'
     | 'question-answered'
+    | 'question-stuck'
     | 'limit-detected'
     | 'limit-hold'
     | 'stop-and-wait-selected'

@@ -73,6 +73,11 @@ stalled. With `--yolo` it answers them too:
   otherwise confirms the highlighted default
 - multi-select: selects **all** options, then confirms
 - consecutive questions are answered one by one
+- only real menus count: a menu is one Claude Code drew, with its
+  `Enter to select · ↑/↓ to navigate` footer. A numbered list you typed into the
+  prompt looks the same otherwise (both start with `❯`) and is never answered
+- a menu that survives three answers is left alone and journaled as
+  `question-stuck`, so nothing types into your session all night
 
 YOLO means what it says: Claude's own judgment drives every fork in the road
 overnight. Use it on sessions where any reasonable answer beats a stalled one.
