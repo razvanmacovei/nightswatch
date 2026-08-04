@@ -48,6 +48,21 @@ Which features do you want to enable?
 Enter to select · ↑/↓ to navigate · Esc to cancel
 `;
 
+const QUESTION_REVIEW = `
+──────────────────────────────────────────────────────────────────────────────
+←  ☒ Visibility  ☒ Data source  ✔ Submit  →
+
+Review your answers
+
+ ● Who should see the "Last login" column on /team?
+   → Managers only (Recommended)
+
+Ready to submit your answers?
+
+❯ 1. Submit answers
+  2. Cancel
+`;
+
 function harness(initialScreen: string, opts: { yolo?: boolean } = {}) {
   const sent: Array<{ text: string; newline: boolean }> = [];
   const events: JournalEvent[] = [];
@@ -323,6 +338,14 @@ describe('question menus and yolo mode', () => {
     const h = harness(QUESTION_PLAIN, { yolo: true });
     await h.watcher.tick();
     expect(h.sent).toEqual([{ text: '', newline: true }]);
+  });
+
+  test('yolo submits the review step instead of leaving the dialog answered but unsent', async () => {
+    const h = harness(QUESTION_REVIEW, { yolo: true });
+    await h.watcher.tick();
+    expect(h.sent).toEqual([{ text: '1', newline: false }]);
+    const detail = h.events.find((e) => e.event === 'question-answered')?.detail ?? '';
+    expect(detail).toContain('Submit answers');
   });
 
   test('yolo toggles every unchecked option then submits with CR', async () => {

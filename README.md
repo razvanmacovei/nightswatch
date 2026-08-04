@@ -73,6 +73,8 @@ stalled. With `--yolo` it answers them too:
   otherwise confirms the highlighted default
 - multi-select: selects **all** options, then confirms
 - consecutive questions are answered one by one
+- multi-question dialogs end on a review step (`Ready to submit your answers?`);
+  nightswatch presses **Submit answers** so the run does not stall there
 - only real menus count: a menu is one Claude Code drew, with its
   `Enter to select · ↑/↓ to navigate` footer. A numbered list you typed into the
   prompt looks the same otherwise (both start with `❯`) and is never answered

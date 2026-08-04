@@ -339,6 +339,64 @@ Space to toggle, Enter to confirm, a to select all
     expect(d.question).toBe('Which features do you want to enable?');
   });
 
+  // Captured verbatim from Claude Code v2.1.221: the last step of a
+  // multi-question AskUserQuestion. It is a plain confirm dialog and renders
+  // no key-hint footer at all, so the footer voucher can never see it.
+  const QUESTION_REVIEW = `
+──────────────────────────────────────────────────────────────────────────────
+←  ☒ Visibility  ☒ Data source  ✔ Submit  →
+
+Review your answers
+
+ ● Who should see the "Last login" column on /team?
+   → Managers only (Recommended)
+ ● What should the column actually measure?
+   → Last sign-in (Recommended)
+
+Ready to submit your answers?
+
+❯ 1. Submit answers
+  2. Cancel
+`;
+
+  test('recognizes the footer-less review step and points at Submit answers', () => {
+    const d = detect(QUESTION_REVIEW, NOW);
+    expect(d).toMatchObject({
+      kind: 'question-menu',
+      multiSelect: false,
+      recommendedOption: 1,
+      recommendedLabel: 'Submit answers',
+    });
+  });
+
+  test('the review step reports its own prompt as the question', () => {
+    const d = detect(QUESTION_REVIEW, NOW);
+    if (d.kind !== 'question-menu') throw new Error('unreachable');
+    expect(d.question).toBe('Ready to submit your answers?');
+  });
+
+  test('a submit-looking menu without the review prompt above it is not a question', () => {
+    const screen = `
+❯ 1. Submit answers
+  2. Cancel
+`;
+    expect(detect(screen, NOW).kind).toBe('none');
+  });
+
+  test('a review prompt left far above in the scrollback does not vouch for a menu', () => {
+    const screen = `
+Ready to submit your answers?
+● a dialog that was already submitted and scrolled up here
+
+⏺ Done. Anything else?
+
+──────────────────────────────────────────────────────────────────────────────
+❯ 1. first line of something the user typed
+  2. Submit answers, he said
+`;
+    expect(detect(screen, NOW).kind).toBe('none');
+  });
+
   test('permission prompts still win over question classification', () => {
     expect(detect(PERMISSION_PROMPT, NOW).kind).toBe('permission-prompt');
   });

@@ -58,9 +58,20 @@ const MENU_FOOTER =
   /enter to (select|confirm)|to navigate|to switch|esc to (cancel|close)|space to toggle/i;
 // Descriptions and a separator can sit between the last option and the footer.
 const FOOTER_LOOKAHEAD = 5;
+// The last step of a multi-question AskUserQuestion is a plain confirm dialog:
+// a tab bar, the answers so far, and "Submit answers / Cancel". Claude Code
+// renders it with no key-hint footer at all, so the footer voucher can never
+// see it and a yolo run stalls with every question answered but nothing sent.
+// Its own prompt line, which sits directly above the options, vouches for it
+// instead — narrowly, so no other footer-less confirm dialog is swept in.
+const REVIEW_PROMPT = /ready to submit your answers\?/i;
+const SUBMIT_OPTION = /^submit answers?\b/i;
+const PROMPT_LOOKBACK = 3;
 
 interface ParsedMenu {
   options: MenuOption[];
+  /** Index of the first option line, so the prompt can be looked for above it. */
+  firstLine: number;
   /** Index of the last option line, so the footer can be looked for below it. */
   lastLine: number;
 }
@@ -73,16 +84,18 @@ interface ParsedMenu {
 function parseMenu(lines: string[]): ParsedMenu | null {
   let best: ParsedMenu | null = null;
   let current: MenuOption[] = [];
+  let firstLine = -1;
   let lastLine = -1;
   const flush = () => {
     if (current.length >= 2 && current.some((o) => o.selected)) {
-      best = { options: current, lastLine };
+      best = { options: current, firstLine, lastLine };
     }
     current = [];
   };
   lines.forEach((line, index) => {
     const match = line.match(OPTION_LINE);
     if (match) {
+      if (current.length === 0) firstLine = index;
       current.push({ number: Number(match[2]), label: match[3]!, selected: Boolean(match[1]) });
       lastLine = index;
     } else if (line.trim() !== '' && !/^\s/.test(line)) {
@@ -101,6 +114,22 @@ function hasMenuFooter(lines: string[], lastOptionLine: number): boolean {
   return lines
     .slice(lastOptionLine + 1, lastOptionLine + 1 + FOOTER_LOOKAHEAD)
     .some((line) => MENU_FOOTER.test(line));
+}
+
+/**
+ * The "Submit answers" option of a question dialog's review step, or null when
+ * this menu is not that step. Both signals are required: the prompt has to sit
+ * right above the options, and the menu has to offer the submit option — so a
+ * numbered list typed into the input box can never pose as one.
+ */
+function findSubmitOption(
+  lines: string[],
+  menu: MenuOption[],
+  firstOptionLine: number,
+): MenuOption | null {
+  const above = lines.slice(Math.max(0, firstOptionLine - PROMPT_LOOKBACK), firstOptionLine);
+  if (!above.some((line) => REVIEW_PROMPT.test(line))) return null;
+  return menu.find((o) => SUBMIT_OPTION.test(o.label)) ?? null;
 }
 
 export function detect(screen: string, now: Date): Detection {
@@ -140,8 +169,11 @@ export function detect(screen: string, now: Date): Detection {
     // but only if the key-hint footer vouches for it. Without one, the caret is
     // Claude Code's prompt echoing the user's own text, and a numbered list
     // typed there would otherwise be "answered" with a stray Enter.
-    if (hasMenuFooter(screenLines, parsed.lastLine)) {
-      const recommended = menu.find((o) => RECOMMENDED.test(o.label));
+    const submit = findSubmitOption(screenLines, menu, parsed.firstLine);
+    if (hasMenuFooter(screenLines, parsed.lastLine) || submit) {
+      // On the review step the option to press is Submit — never the caret,
+      // which a stray arrow key could have left sitting on Cancel.
+      const recommended = submit ?? menu.find((o) => RECOMMENDED.test(o.label));
       const answerOptions = menu.filter((o) => !NON_ANSWER_OPTION.test(o.label));
       const multiSelect =
         MULTISELECT_HINT.test(screen) || answerOptions.some((o) => CHECKBOX.test(o.label));
