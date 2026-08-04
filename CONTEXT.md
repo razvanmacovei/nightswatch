@@ -29,7 +29,7 @@ The Claude Code UI shown when the subscription usage limit is hit, offering to s
 _Avoid_: Rate limit error
 
 **Reset time**:
-The timestamp parsed from the Limit prompt at which the usage window reopens.
+The timestamp at which the usage window reopens, read off the screen in the user's own clock time. Claude Code often prints it only after the Limit prompt is answered, so Nightswatch starts on a fallback wait and swaps in the real time as soon as it appears.
 
 **Resume**:
 Sending "continue" to a Session at its Reset time so it picks up where it stopped.

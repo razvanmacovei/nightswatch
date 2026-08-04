@@ -1,4 +1,5 @@
 import { detect, type Detection } from './detector.js';
+import { localTime } from './format.js';
 import type { Journal } from './journal.js';
 
 export interface WatcherDeps {
@@ -80,7 +81,7 @@ export function createWatcher(deps: WatcherDeps): Watcher {
   const isStaleBanner = (resetAt: Date | null) =>
     resumedForResetAt !== null && resetAt !== null && resetAt.getTime() <= resumedForResetAt;
 
-  const scheduleResume = (resetAt: Date | null, nowMs: number) => {
+  const scheduleResume = (resetAt: Date | null, nowMs: number, reason?: string) => {
     // A reset time in the past (stale banner) means we're due now, not in ~24h.
     const base = resetAt ? Math.max(resetAt.getTime(), nowMs) : nowMs + deps.fallbackWaitMs;
     resumeAt = base + deps.resumeMarginMs;
@@ -89,9 +90,26 @@ export function createWatcher(deps: WatcherDeps): Watcher {
     record(
       'resume-scheduled',
       resetAt
-        ? `reset parsed as ${resetAt.toISOString()}; will send "continue" after margin`
+        ? `${reason ?? 'reset parsed as'} ${localTime(resetAt)}; will send "continue" ${Math.round(
+            deps.resumeMarginMs / 60_000,
+          )}m later`
         : `no reset time found; falling back to ${Math.round(deps.fallbackWaitMs / 60_000)}m wait`,
     );
+  };
+
+  /**
+   * Claude Code often prints the reset time only after the limit menu is
+   * answered ("· resets 5:10pm"), so the menu itself leaves nothing to parse and
+   * the wait starts as a blind guess. Keep reading the screen and trade that
+   * guess for the real time as soon as it appears — a 30m guess either wastes
+   * quota or types "continue" into a session that is still locked out. Only a
+   * reset still in the future counts: a time already past is a banner left in
+   * the scrollback by an earlier limit, which says nothing about this one.
+   */
+  const upgradeFallback = (resetAt: Date | null, nowMs: number) => {
+    if (resumeAt === null || pendingResetAt !== null) return;
+    if (resetAt === null || resetAt.getTime() <= nowMs || isStaleBanner(resetAt)) return;
+    scheduleResume(resetAt, nowMs, 'reset time appeared after the fallback wait started —');
   };
 
   return {
@@ -125,6 +143,9 @@ export function createWatcher(deps: WatcherDeps): Watcher {
       if (outcomeDeadline !== null && !limitOnScreen) {
         outcomeDeadline = null;
         record('resume-confirmed', 'limit cleared — session is running again');
+      }
+      if (detection.kind === 'limit-idle' || detection.kind === 'limit-menu') {
+        upgradeFallback(detection.resetAt, nowMs);
       }
 
       // Re-read and re-classify immediately before any keystroke: the screen

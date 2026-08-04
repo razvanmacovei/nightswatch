@@ -10,6 +10,11 @@ function pad2(n: number): string {
   return String(n).padStart(2, '0');
 }
 
+/** Clock time as the user reads it on screen — the machine's local zone. */
+export function localTime(date: Date): string {
+  return `${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
+}
+
 export function describeDetection(detection: Detection): string {
   switch (detection.kind) {
     case 'none':
@@ -21,9 +26,7 @@ export function describeDetection(detection: Detection): string {
     case 'limit-menu':
     case 'limit-idle': {
       const { resetAt } = detection;
-      return resetAt
-        ? `limit hit · resets ${pad2(resetAt.getHours())}:${pad2(resetAt.getMinutes())}`
-        : 'limit hit';
+      return resetAt ? `limit hit · resets ${localTime(resetAt)}` : 'limit hit';
     }
   }
 }

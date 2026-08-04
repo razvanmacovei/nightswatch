@@ -190,6 +190,58 @@ Usage limit reached.
     expect(h.sent).toHaveLength(2); // fallback 30m + margin elapsed
   });
 
+  const LIMIT_MENU_NO_TIME = `
+Usage limit reached.
+
+❯ 1. Continue with usage credits
+  2. Stop and wait for limit to reset
+`;
+
+  test('journals the reset in the clock time the user sees, not UTC', async () => {
+    const h = harness(LIMIT_MENU); // banner says "resets 3am"
+    await h.watcher.tick();
+    const scheduled = h.events.find((e) => e.event === 'resume-scheduled');
+    expect(scheduled?.detail).toContain('03:00');
+  });
+
+  test('replaces the fallback wait with the reset time the banner reveals later', async () => {
+    const h = harness(LIMIT_MENU_NO_TIME);
+    await h.watcher.tick(); // 01:00 — nothing to parse yet; fallback would fire at 01:31
+    // Claude Code prints the reset time only after the menu is answered.
+    h.setScreen('✗ 5-hour limit reached ∙ resets 1:10am\n\n❯');
+    h.advance(60_000); // 01:01
+    await h.watcher.tick();
+    h.advance(10 * 60_000 + 30_000); // 01:11:30 — past 01:10 + margin, before the fallback
+    await h.watcher.tick();
+    expect(h.sent).toHaveLength(2);
+    expect(h.sent[1]).toEqual({ text: 'continue', newline: true });
+  });
+
+  test('pushes the fallback wait out when the real reset is later than the guess', async () => {
+    const h = harness(LIMIT_MENU_NO_TIME);
+    await h.watcher.tick(); // 01:00 — fallback would fire at 01:31
+    h.setScreen('✗ 5-hour limit reached ∙ resets 3am\n\n❯');
+    await h.watcher.tick();
+    h.advance(32 * 60_000); // 01:32 — the fallback deadline has passed
+    await h.watcher.tick();
+    expect(h.sent).toHaveLength(1); // no premature "continue"
+    h.advance(88 * 60_000 + 60_000); // 03:01 — past 03:00 + margin
+    await h.watcher.tick();
+    expect(h.sent).toHaveLength(2);
+  });
+
+  test('keeps the fallback when the only reset time on screen has already passed', async () => {
+    const h = harness(LIMIT_MENU_NO_TIME);
+    await h.watcher.tick(); // 01:00 — fallback scheduled for 01:31
+    // A banner left over from an earlier limit says nothing about this one.
+    h.setScreen('✗ 5-hour limit reached ∙ resets 12:30am\n\n❯');
+    h.advance(60_000); // 01:01
+    await h.watcher.tick();
+    h.advance(60_000); // 01:02 — well before the fallback deadline
+    await h.watcher.tick();
+    expect(h.sent).toHaveLength(1); // no resume pulled forward by a dead banner
+  });
+
   test('does not reselect stop-and-wait while a resume is already scheduled', async () => {
     const h = harness(LIMIT_MENU);
     await h.watcher.tick(); // selects wait, schedules resume
