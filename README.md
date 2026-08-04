@@ -18,6 +18,7 @@ way — and keeps them moving:
   the reset time from the screen, and sends `continue` the moment the window
   reopens — once per limit, then confirms the session actually came back
 - **Picks up new sessions** opened after it started, when run with `--all`
+- **Keeps the Mac awake** for the length of the watch, with `--caffeine`
 - **Keeps a journal** of everything it did while you slept
 
 ```
@@ -59,6 +60,8 @@ nightswatch ls                 List Claude Code sessions running in iTerm2
 nightswatch watch <n>          Watch session <n> from `nightswatch ls`
 nightswatch watch --all        Watch every discovered session
 nightswatch watch <n> --yolo   Also answer questions Claude asks
+nightswatch watch <n> --caffeine
+                               Keep the Mac and its display awake while watching
 nightswatch log [YYYY-MM-DD]   Show the journal for a day (default: today)
 ```
 
@@ -83,6 +86,24 @@ stalled. With `--yolo` it answers them too:
 
 YOLO means what it says: Claude's own judgment drives every fork in the road
 overnight. Use it on sessions where any reasonable answer beats a stalled one.
+
+### Keeping the Mac awake
+
+A watcher whose machine falls asleep is watching nothing: the sessions stall,
+the limit reset comes and goes, and the journal shows a quiet night that never
+happened. `--caffeine` closes that hole without a second terminal:
+
+```
+nightswatch watch --all --yolo --caffeine
+```
+
+Nightswatch runs `caffeinate -dimsu` for you in the background and releases it
+when it stops, so the display stays lit and the machine stays awake for exactly
+as long as it is watching. Nothing to remember, nothing to clean up: caffeinate
+is tied to nightswatch's own process and exits with it even if nightswatch is
+killed outright or you close its tab.
+
+It is opt-in. Without the flag, nothing about your power settings changes.
 
 ### Watching everything
 

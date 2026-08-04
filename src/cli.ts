@@ -1,7 +1,9 @@
 #!/usr/bin/env node
+import { spawn } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
+import { CAFFEINATE_FLAGS, createCaffeine } from './caffeine.js';
 import { detect } from './detector.js';
 import {
   findClaudeProcesses,
@@ -42,6 +44,8 @@ Usage:
   nightswatch watch <dir>        Watch the session whose directory matches <dir>
   nightswatch watch --all        Watch every session, including ones opened later
   nightswatch watch <s> --yolo   Also answer questions Claude asks (see below)
+  nightswatch watch <s> --caffeine
+                                 Keep the Mac (and its display) awake while watching
 
 Prefer <dir> over <n> when other iTerm2 windows may open or refocus: numeric
 indexes follow window order, which changes; a directory match does not.
@@ -61,6 +65,11 @@ With --yolo, question menus (AskUserQuestion) are answered too: the
 "(Recommended)" option when one exists, otherwise the highlighted default;
 multi-select questions get "select all" then confirm. Without --yolo,
 questions are journaled but left for you to answer.
+
+With --caffeine, nightswatch holds off display and system sleep for as long as
+it is watching (\`caffeinate ${CAFFEINATE_FLAGS}\`, run for you in the background)
+and releases them when it stops. A Mac that falls asleep stalls every session
+it was supposed to be watching.
 
 Safety: watching a session approves EVERY prompt it raises — functionally the
 same as --dangerously-skip-permissions. Configure deny rules in Claude Code's
@@ -102,7 +111,16 @@ async function cmdLs(iterm: ItermAdapter): Promise<void> {
   for (const line of formatTable(['WIN/TAB', 'DIRECTORY', 'STATE'], rows)) console.log(line);
 }
 
-async function cmdWatch(iterm: ItermAdapter, selector: string, yolo: boolean): Promise<void> {
+interface WatchOptions {
+  yolo: boolean;
+  caffeine: boolean;
+}
+
+async function cmdWatch(
+  iterm: ItermAdapter,
+  selector: string,
+  opts: WatchOptions,
+): Promise<void> {
   const discovered = await discover(iterm);
   if (discovered.length === 0) {
     console.error('No Claude Code sessions found in iTerm2. Nothing to watch.');
@@ -123,6 +141,15 @@ async function cmdWatch(iterm: ItermAdapter, selector: string, yolo: boolean): P
   const journal = createJournal(JOURNAL_DIR);
   const watchers = new Map<string, { name: string; watcher: ReturnType<typeof createWatcher> }>();
 
+  // Started only after the selection succeeds, so a bad selector never leaves
+  // a caffeinate holding the display on behind a command that did nothing.
+  const caffeine = createCaffeine({
+    spawn: (command, args) => spawn(command, args, { stdio: 'ignore' }),
+    pid: process.pid,
+    warn: (message) => log(`caffeine unavailable, watching anyway — ${message}`),
+  });
+  if (opts.caffeine) caffeine.start();
+
   const attach = (d: DiscoveredSession, picked: boolean) => {
     const name = shortenHome(d.cwd, home);
     journal.record({
@@ -132,7 +159,7 @@ async function cmdWatch(iterm: ItermAdapter, selector: string, yolo: boolean): P
       detail: `pid ${d.process.pid}, tty ${d.session.tty}${picked ? ' (started after nightswatch)' : ''}`,
     });
     log(
-      `watching ${name} (window ${d.session.windowIndex}, tab ${d.session.tabIndex}) — auto-yes ON${yolo ? ', yolo ON' : ''}`,
+      `watching ${name} (window ${d.session.windowIndex}, tab ${d.session.tabIndex}) — auto-yes ON${opts.yolo ? ', yolo ON' : ''}`,
     );
     watchers.set(d.session.id, {
       name,
@@ -145,7 +172,7 @@ async function cmdWatch(iterm: ItermAdapter, selector: string, yolo: boolean): P
             return null;
           }
         },
-        send: (text, opts) => iterm.sendText(d.session.id, text, opts),
+        send: (text, sendOpts) => iterm.sendText(d.session.id, text, sendOpts),
         journal: {
           record(event) {
             journal.record(event);
@@ -157,7 +184,7 @@ async function cmdWatch(iterm: ItermAdapter, selector: string, yolo: boolean): P
         resumeMarginMs: RESUME_MARGIN_MS,
         fallbackWaitMs: FALLBACK_WAIT_MS,
         postResumeQuietMs: POST_RESUME_QUIET_MS,
-        yolo,
+        yolo: opts.yolo,
       }),
     });
   };
@@ -165,6 +192,9 @@ async function cmdWatch(iterm: ItermAdapter, selector: string, yolo: boolean): P
   for (const d of targets) attach(d, false);
 
   log(`journal: ${JOURNAL_DIR}`);
+  if (opts.caffeine) {
+    log(`caffeine ON — holding off display and system sleep (caffeinate ${CAFFEINATE_FLAGS})`);
+  }
   if (selection.kind === 'all') {
     log(`rescanning for new sessions every ${Math.round(REDISCOVER_INTERVAL_MS / 1000)}s`);
   }
@@ -180,6 +210,7 @@ async function cmdWatch(iterm: ItermAdapter, selector: string, yolo: boolean): P
         detail: 'stopped by user',
       });
     }
+    caffeine.stop();
     log('stopped.');
     process.exit(0);
   });
@@ -187,42 +218,48 @@ async function cmdWatch(iterm: ItermAdapter, selector: string, yolo: boolean): P
   let nextRediscover = Date.now() + REDISCOVER_INTERVAL_MS;
   let idleReported = false;
 
-  while (!shuttingDown) {
-    for (const [id, w] of watchers) {
-      if (w.watcher.stopped) {
-        // Drop it so a session that only blipped (or a tab reused later) can be
-        // picked up again by the next rescan instead of staying invisible.
-        watchers.delete(id);
-        continue;
+  try {
+    while (!shuttingDown) {
+      for (const [id, w] of watchers) {
+        if (w.watcher.stopped) {
+          // Drop it so a session that only blipped (or a tab reused later) can be
+          // picked up again by the next rescan instead of staying invisible.
+          watchers.delete(id);
+          continue;
+        }
+        await w.watcher.tick();
       }
-      await w.watcher.tick();
-    }
 
-    // --all is a standing instruction: sessions opened later belong to it too.
-    if (selection.kind === 'all' && Date.now() >= nextRediscover) {
-      nextRediscover = Date.now() + REDISCOVER_INTERVAL_MS;
-      try {
-        const fresh = await discover(iterm);
-        for (const d of unwatchedSessions(fresh, watchers.keys())) attach(d, true);
-      } catch {
-        // A failed rescan is transient (iTerm2 busy, ps hiccup); try again later.
+      // --all is a standing instruction: sessions opened later belong to it too.
+      if (selection.kind === 'all' && Date.now() >= nextRediscover) {
+        nextRediscover = Date.now() + REDISCOVER_INTERVAL_MS;
+        try {
+          const fresh = await discover(iterm);
+          for (const d of unwatchedSessions(fresh, watchers.keys())) attach(d, true);
+        } catch {
+          // A failed rescan is transient (iTerm2 busy, ps hiccup); try again later.
+        }
       }
-    }
 
-    if (watchers.size === 0) {
-      if (selection.kind !== 'all') {
-        log('all sessions gone — exiting.');
-        return;
+      if (watchers.size === 0) {
+        if (selection.kind !== 'all') {
+          log('all sessions gone — exiting.');
+          return;
+        }
+        if (!idleReported) {
+          idleReported = true;
+          log('no sessions left — waiting for new ones (ctrl-c to stop).');
+        }
+      } else {
+        idleReported = false;
       }
-      if (!idleReported) {
-        idleReported = true;
-        log('no sessions left — waiting for new ones (ctrl-c to stop).');
-      }
-    } else {
-      idleReported = false;
-    }
 
-    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+    }
+  } finally {
+    // Every exit that is not ctrl-c lands here; a hard kill is covered by
+    // caffeinate's own -w watch on our pid.
+    caffeine.stop();
   }
 }
 
@@ -269,14 +306,28 @@ async function main(): Promise<void> {
       await cmdLs(iterm);
       return;
     case 'watch': {
-      const yolo = rest.includes('--yolo');
-      const selector = rest.filter((a) => a !== '--yolo')[0];
-      if (!selector) {
-        console.error('Usage: nightswatch watch <n> | --all [--yolo]');
+      // Reject unknown options rather than mistaking one for a selector: a
+      // typo'd --caffeine would otherwise cost you a night of sleeping Mac.
+      // --all is not in here — it is a selector, not an option.
+      const OPTIONS = ['--yolo', '--caffeine'];
+      const unknown = rest.find(
+        (a) => a.startsWith('-') && a !== '--all' && !OPTIONS.includes(a),
+      );
+      if (unknown) {
+        console.error(`Unknown option "${unknown}". Run \`nightswatch --help\`.`);
         process.exitCode = 1;
         return;
       }
-      await cmdWatch(iterm, selector, yolo);
+      const selector = rest.find((a) => !OPTIONS.includes(a));
+      if (!selector) {
+        console.error('Usage: nightswatch watch <n> | --all [--yolo] [--caffeine]');
+        process.exitCode = 1;
+        return;
+      }
+      await cmdWatch(iterm, selector, {
+        yolo: rest.includes('--yolo'),
+        caffeine: rest.includes('--caffeine'),
+      });
       return;
     }
     case 'log':
